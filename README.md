@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# N-Body Gravity Sandbox
 
-## Getting Started
+Interactive gravitational physics simulation running entirely in the browser. Place stars, planets, black holes, and asteroids on a canvas — watch real orbits emerge from Newton's law of universal gravitation, computed fresh every frame with no physics library.
 
-First, run the development server:
+## How the physics works
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Every body exerts a force on every other body each frame:
+
+```
+F = G × m₁ × m₂ / (d² + ε)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`ε = 50` is a softening factor that prevents the force from blowing up when two bodies pass very close — close passes become gravitational slingshots instead of singularities.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Force becomes acceleration via `F = ma`, which updates velocity, which updates position.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Velocity Verlet integration** is used instead of Euler. Euler slowly bleeds energy out of orbits — planets spiral inward over time. Verlet is symplectic (energy-conserving), so stable orbits stay stable indefinitely. Each step averages the old and new acceleration when updating velocity:
 
-## Learn More
+```
+x      +=  vx·dt + ½·ax·dt²
+ax_new  =  recompute forces
+vx     +=  ½·(ax_old + ax_new)·dt
+```
 
-To learn more about Next.js, take a look at the following resources:
+When two bodies overlap (distance < sum of radii × 0.75), they merge: momentum is conserved, position moves to the center of mass, and the smaller body is absorbed.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## File structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+src/
+├── app/
+│   ├── page.tsx              # Root — renders GravitySandbox full screen
+│   └── layout.tsx
+├── components/
+│   ├── gravity-sandbox.tsx   # Main component: canvas, rAF loop, mouse events
+│   ├── toolbar.tsx           # Body picker, G slider, speed, controls, presets
+│   └── body-tooltip.tsx      # Hover card: type, mass, speed
+└── lib/
+    ├── physics.ts            # Body type, step(), Verlet integrator, collisions
+    ├── renderer.ts           # Canvas drawing: glow, trails, accretion rings, arrow
+    ├── serialize.ts          # Compact base64 URL-hash encode/decode
+    └── presets.ts            # Five preset configurations
+```
 
-## Deploy on Vercel
+## Presets
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Preset | Description |
+|---|---|
+| **Binary Stars** | Two equal-mass stars orbiting their common center of mass |
+| **Solar System** | Pinned sun + 5 planets with correct circular-orbit velocities |
+| **Figure-8** | Chenciner–Montgomery three-body choreography, scaled from the G=1 solution |
+| **Slingshot** | Pinned planet with 12 asteroids on hyperbolic fly-bys |
+| **Black Hole Field** | 24 asteroids in eccentric orbits around a central singularity |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Controls
+
+| Action | Input |
+|---|---|
+| Place body | Click |
+| Set initial velocity | Click + drag — arrow preview shows direction and magnitude |
+| Delete body | Right-click |
+| Hover info | Mouse over any body — shows type, mass, speed |
+| Pause / resume | Toolbar button |
+| Share | Encodes all bodies into the URL hash, copies link to clipboard |
+
+## Shareable URLs
+
+The full simulation state is encoded as a compact base64 string in `window.location.hash`. Trails and runtime IDs are stripped — only position, velocity, mass, radius, color, and type are saved. Pasting the URL exactly restores the simulation at that moment.
+
+## Stack
+
+- **Next.js 16** (App Router, Turbopack)
+- **TypeScript**
+- **Tailwind CSS v4**
+- **Pure 2D Canvas** — no Three.js, no physics library
+
+## Getting started
+
+```bash
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
