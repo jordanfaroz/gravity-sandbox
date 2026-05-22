@@ -87,8 +87,23 @@ function computeAccelerations(bodies: Body[], G: number): { ax: number; ay: numb
   return accels
 }
 
-export function step(bodies: Body[], G: number, dt: number): Body[] {
-  if (bodies.length === 0) return bodies
+export interface CollisionEvent {
+  x: number
+  y: number
+  color: string
+  relativeSpeed: number
+  radius: number
+  vx: number
+  vy: number
+  spawnDebris: boolean  // false when both bodies are asteroids — prevents chain reactions
+}
+
+export function step(
+  bodies: Body[],
+  G: number,
+  dt: number
+): { bodies: Body[]; collisions: CollisionEvent[] } {
+  if (bodies.length === 0) return { bodies, collisions: [] }
 
   // Velocity Verlet step 1: update positions, save old accelerations
   for (const b of bodies) {
@@ -119,8 +134,9 @@ export function step(bodies: Body[], G: number, dt: number): Body[] {
   return handleCollisions(bodies)
 }
 
-function handleCollisions(bodies: Body[]): Body[] {
+function handleCollisions(bodies: Body[]): { bodies: Body[]; collisions: CollisionEvent[] } {
   const toRemove = new Set<number>()
+  const collisions: CollisionEvent[] = []
 
   for (let i = 0; i < bodies.length; i++) {
     if (toRemove.has(i)) continue
@@ -132,12 +148,30 @@ function handleCollisions(bodies: Body[]): Body[] {
 
       if (dist < (bodies[i].radius + bodies[j].radius) * 0.75) {
         const totalMass = bodies[i].mass + bodies[j].mass
+        const cx = (bodies[i].x * bodies[i].mass + bodies[j].x * bodies[j].mass) / totalMass
+        const cy = (bodies[i].y * bodies[i].mass + bodies[j].y * bodies[j].mass) / totalMass
+        const dvx = bodies[i].vx - bodies[j].vx
+        const dvy = bodies[i].vy - bodies[j].vy
+        const mergedVx = (bodies[i].vx * bodies[i].mass + bodies[j].vx * bodies[j].mass) / totalMass
+        const mergedVy = (bodies[i].vy * bodies[i].mass + bodies[j].vy * bodies[j].mass) / totalMass
+
+        collisions.push({
+          x: cx,
+          y: cy,
+          color: bodies[i].mass >= bodies[j].mass ? bodies[i].color : bodies[j].color,
+          relativeSpeed: Math.sqrt(dvx * dvx + dvy * dvy),
+          radius: Math.max(bodies[i].radius, bodies[j].radius),
+          vx: mergedVx,
+          vy: mergedVy,
+          spawnDebris: bodies[i].type !== 'asteroid' && bodies[j].type !== 'asteroid',
+        })
+
         // Conserve momentum
-        bodies[i].vx = (bodies[i].vx * bodies[i].mass + bodies[j].vx * bodies[j].mass) / totalMass
-        bodies[i].vy = (bodies[i].vy * bodies[i].mass + bodies[j].vy * bodies[j].mass) / totalMass
+        bodies[i].vx = mergedVx
+        bodies[i].vy = mergedVy
         // Center of mass position
-        bodies[i].x = (bodies[i].x * bodies[i].mass + bodies[j].x * bodies[j].mass) / totalMass
-        bodies[i].y = (bodies[i].y * bodies[i].mass + bodies[j].y * bodies[j].mass) / totalMass
+        bodies[i].x = cx
+        bodies[i].y = cy
         bodies[i].mass = totalMass
         bodies[i].radius = defaultRadius(totalMass, bodies[i].type)
         toRemove.add(j)
@@ -145,6 +179,6 @@ function handleCollisions(bodies: Body[]): Body[] {
     }
   }
 
-  if (toRemove.size === 0) return bodies
-  return bodies.filter((_, i) => !toRemove.has(i))
+  if (toRemove.size === 0) return { bodies, collisions }
+  return { bodies: bodies.filter((_, i) => !toRemove.has(i)), collisions }
 }

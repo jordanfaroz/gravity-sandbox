@@ -7,19 +7,133 @@ export interface DragState {
   currentY: number
 }
 
+export interface Viewport {
+  x: number
+  y: number
+  scale: number
+}
+
+export type ParticleKind = 'spark' | 'fire' | 'smoke' | 'shockwave' | 'flash'
+
+export interface Particle {
+  kind: ParticleKind
+  x: number
+  y: number
+  vx: number
+  vy: number
+  life: number        // 1 → 0
+  decay: number       // life lost per normalised frame
+  color: string
+  size: number
+  startRadius?: number  // shockwave: initial ring radius
+  endRadius?: number    // shockwave: final ring radius
+}
+
 export function draw(
   ctx: CanvasRenderingContext2D,
   bodies: Body[],
+  particles: Particle[],
   dragState: DragState | null,
-  hoveredId: string | null
+  hoveredId: string | null,
+  viewport: Viewport
 ): void {
   const { width, height } = ctx.canvas
   ctx.fillStyle = '#0a0a0f'
   ctx.fillRect(0, 0, width, height)
 
+  ctx.save()
+  ctx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y)
+
   for (const b of bodies) drawTrail(ctx, b)
+  // Smoke behind bodies; everything else in front
+  for (const p of particles) { if (p.kind === 'smoke') drawParticle(ctx, p) }
   for (const b of bodies) drawBody(ctx, b, b.id === hoveredId)
+  for (const p of particles) { if (p.kind !== 'smoke') drawParticle(ctx, p) }
   if (dragState) drawArrow(ctx, dragState)
+
+  ctx.restore()
+}
+
+function drawParticle(ctx: CanvasRenderingContext2D, p: Particle): void {
+  switch (p.kind) {
+    case 'spark':     drawSpark(ctx, p);     break
+    case 'fire':      drawFire(ctx, p);      break
+    case 'smoke':     drawSmoke(ctx, p);     break
+    case 'shockwave': drawShockwave(ctx, p); break
+    case 'flash':     drawFlash(ctx, p);     break
+  }
+}
+
+function drawSpark(ctx: CanvasRenderingContext2D, p: Particle): void {
+  const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy)
+  if (speed < 0.01) return
+  const trailLen = Math.min(speed * 5, 45)
+  ctx.save()
+  ctx.globalAlpha = p.life
+  ctx.strokeStyle = p.color
+  ctx.lineWidth = p.size
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  ctx.moveTo(p.x, p.y)
+  ctx.lineTo(p.x - (p.vx / speed) * trailLen, p.y - (p.vy / speed) * trailLen)
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawFire(ctx: CanvasRenderingContext2D, p: Particle): void {
+  const r = p.size * (0.35 + 0.65 * p.life)
+  if (r < 0.5) return
+  ctx.save()
+  ctx.globalAlpha = Math.pow(p.life, 1.4)
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r)
+  g.addColorStop(0, '#ffffff')
+  g.addColorStop(0.25, p.color)
+  g.addColorStop(1, p.color + '00')
+  ctx.fillStyle = g
+  ctx.beginPath()
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+function drawSmoke(ctx: CanvasRenderingContext2D, p: Particle): void {
+  const r = p.size * (1 + 1.8 * (1 - p.life))
+  ctx.save()
+  ctx.globalAlpha = p.life * 0.16
+  ctx.fillStyle = p.color
+  ctx.beginPath()
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+function drawShockwave(ctx: CanvasRenderingContext2D, p: Particle): void {
+  const progress = 1 - p.life
+  const r = (p.startRadius ?? 0) + ((p.endRadius ?? 80) - (p.startRadius ?? 0)) * progress
+  if (r < 0.1) return
+  ctx.save()
+  ctx.globalAlpha = p.life * p.life * 0.85
+  ctx.strokeStyle = p.color
+  ctx.lineWidth = 2.5 * p.life
+  ctx.beginPath()
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.restore()
+}
+
+function drawFlash(ctx: CanvasRenderingContext2D, p: Particle): void {
+  ctx.save()
+  ctx.globalAlpha = p.life * p.life
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size)
+  g.addColorStop(0,   '#ffffff')
+  g.addColorStop(0.15, '#fffde0')
+  g.addColorStop(0.5,  p.color + 'cc')
+  g.addColorStop(1,   'transparent')
+  ctx.fillStyle = g
+  ctx.beginPath()
+  ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
 }
 
 function drawTrail(ctx: CanvasRenderingContext2D, body: Body): void {

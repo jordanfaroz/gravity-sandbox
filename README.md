@@ -22,7 +22,7 @@ ax_new  =  recompute forces
 vx     +=  ½·(ax_old + ax_new)·dt
 ```
 
-When two bodies overlap (distance < sum of radii × 0.75), they merge: momentum is conserved, position moves to the center of mass, and the smaller body is absorbed.
+When two bodies overlap (distance < sum of radii × 0.75), they merge: momentum is conserved, position moves to the center of mass, and the smaller body is absorbed. Real debris asteroids are ejected outward from the collision site.
 
 ## File structure
 
@@ -34,12 +34,15 @@ src/
 ├── components/
 │   ├── gravity-sandbox.tsx   # Main component: canvas, rAF loop, mouse events
 │   ├── toolbar.tsx           # Body picker, G slider, speed, controls, presets
-│   └── body-tooltip.tsx      # Hover card: type, mass, speed
+│   ├── body-tooltip.tsx      # Hover card: type, mass, speed
+│   └── ui/
+│       └── liquid-glass-button.tsx  # Glass-morphism button with SVG filter
 └── lib/
     ├── physics.ts            # Body type, step(), Verlet integrator, collisions
-    ├── renderer.ts           # Canvas drawing: glow, trails, accretion rings, arrow
+    ├── renderer.ts           # Canvas drawing: glow, trails, accretion rings, particles
     ├── serialize.ts          # Compact base64 URL-hash encode/decode
-    └── presets.ts            # Five preset configurations
+    ├── presets.ts            # Five preset configurations
+    └── utils.ts              # cn() helper (clsx + tailwind-merge)
 ```
 
 ## Presets
@@ -58,10 +61,33 @@ src/
 |---|---|
 | Place body | Click |
 | Set initial velocity | Click + drag — arrow preview shows direction and magnitude |
+| Drag existing body | Click and hold on a body — simulation pauses while dragging, resumes on release |
 | Delete body | Right-click |
+| Zoom | Scroll wheel (centered on cursor) or ± buttons at top |
+| Pan | Middle-mouse drag |
 | Hover info | Mouse over any body — shows type, mass, speed |
 | Pause / resume | Toolbar button |
 | Share | Encodes all bodies into the URL hash, copies link to clipboard |
+
+## Collision effects
+
+When two non-asteroid bodies collide a full explosion fires:
+
+- **Flash bloom** — a large radial gradient burst at the impact site
+- **Shockwave rings** — two expanding rings that fade as they travel outward
+- **Sparks** — 14–20 motion-blurred streaks flying outward
+- **Fire** — soft radial-gradient fireballs in orange/yellow/white
+- **Smoke** — slowly expanding dark clouds that linger
+- **Screen shake** — viewport jolts proportional to impact energy
+- **Debris asteroids** — 3–5 real physics bodies ejected from the collision, visible as grey rocks that then orbit, escape, or get recaptured
+
+Asteroid-on-body absorptions show only a small grey sparkle to avoid chain reactions.
+
+## Viewport
+
+- Zoom range: **0.04× – 25×**, pivot at the cursor
+- Middle-mouse drag to pan
+- Zoom widget at the top center (− 1.00× +)
 
 ## Shareable URLs
 
