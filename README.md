@@ -71,7 +71,7 @@ src/
     ├── physics.ts            # Body type, step(), Verlet integrator, collisions
     ├── renderer.ts           # Canvas drawing: glow, trails, accretion rings, particles, absorption
     ├── serialize.ts          # Compact base64 URL-hash encode/decode
-    ├── presets.ts            # Five preset configurations
+    ├── presets.ts            # Eleven preset configurations
     └── utils.ts              # cn() helper (clsx + tailwind-merge)
 ```
 
@@ -84,6 +84,12 @@ src/
 | **Figure-8** | Chenciner–Montgomery three-body choreography, scaled from the G=1 solution |
 | **Slingshot** | Pinned planet with 12 asteroids on hyperbolic fly-bys |
 | **Black Hole Field** | 24 asteroids in eccentric orbits around a central singularity |
+| **Galaxy Collision** | Two mini-galaxies (each a black hole + 4 orbiters) on a collision course |
+| **3-Body Chaos** | Three equal stars in an unstable equilateral triangle — tiny perturbation triggers chaos |
+| **Trojans** | Star + planet + 14 asteroids clustered at the L4 and L5 Lagrange points |
+| **Rogue Star** | Stable solar system invaded by a rogue star on a hyperbolic trajectory |
+| **Double Binary** | Two tight stellar pairs orbiting each other — hierarchical quadruple system |
+| **Pulsar** | Massive black hole with a fast companion star and scattered eccentric debris |
 
 ## Controls
 

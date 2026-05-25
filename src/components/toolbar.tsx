@@ -33,6 +33,12 @@ const PRESETS: { name: PresetName; label: string }[] = [
   { name: 'figure8',   label: 'Figure-8'         },
   { name: 'slingshot', label: 'Slingshot'        },
   { name: 'blackhole', label: 'Black Hole Field' },
+  { name: 'galaxy',    label: 'Galaxy Collision' },
+  { name: 'chaos',     label: '3-Body Chaos'     },
+  { name: 'trojan',    label: 'Trojans'          },
+  { name: 'rogue',     label: 'Rogue Star'       },
+  { name: 'quadruple', label: 'Double Binary'    },
+  { name: 'pulsar',    label: 'Pulsar'           },
 ]
 
 export default function Toolbar({
