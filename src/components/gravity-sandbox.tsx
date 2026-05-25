@@ -36,8 +36,12 @@ export default function GravitySandbox() {
   const supernovasRef = useRef<SupernovaAnim[]>([])
   const shakeRef = useRef({ x: 0, y: 0 })
 
+  // Mirror selectedType in a ref so touch handlers (inside useEffect) never go stale
+  const selectedTypeRef = useRef<BodyType>('planet')
+
   // React state for UI only
   const [selectedType, setSelectedType] = useState<BodyType>('planet')
+  useEffect(() => { selectedTypeRef.current = selectedType }, [selectedType])
   const [isRunning, setIsRunning] = useState(true)
   const [G, setGState] = useState(6.674)
   const [speed, setSpeedState] = useState(1)
@@ -431,6 +435,174 @@ export default function GravitySandbox() {
     return () => canvas.removeEventListener('wheel', onWheel)
   }, [applyZoom])
 
+  // Touch handlers — non-passive so we can preventDefault and block browser scroll/zoom
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const getWorld = (touch: Touch) => {
+      const rect = canvas.getBoundingClientRect()
+      const { x, y, scale } = viewportRef.current
+      return {
+        wx: (touch.clientX - rect.left - x) / scale,
+        wy: (touch.clientY - rect.top  - y) / scale,
+      }
+    }
+
+    const hitTest = (wx: number, wy: number) =>
+      bodiesRef.current.find(b => {
+        const dx = b.x - wx, dy = b.y - wy
+        const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
+        return dx * dx + dy * dy < gr * gr
+      }) ?? null
+
+    // Local state for pinch and long-press (lives inside the closure, stable for lifetime of effect)
+    let pinch: { dist: number; midX: number; midY: number } | null = null
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null
+    let longPressOrigin: { clientX: number; clientY: number } | null = null
+
+    const cancelLongPress = () => {
+      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null }
+      longPressOrigin = null
+    }
+
+    const onStart = (e: TouchEvent) => {
+      e.preventDefault()
+
+      if (e.touches.length >= 2) {
+        // Two fingers: start pinch — cancel any ongoing single-touch interaction
+        cancelLongPress()
+        dragRef.current = null
+        if (bodyDragRef.current) {
+          isRunningRef.current = bodyDragRef.current.wasRunning
+          bodyDragRef.current = null
+        }
+        const t1 = e.touches[0], t2 = e.touches[1]
+        const dx = t2.clientX - t1.clientX, dy = t2.clientY - t1.clientY
+        pinch = {
+          dist: Math.sqrt(dx * dx + dy * dy),
+          midX: (t1.clientX + t2.clientX) / 2,
+          midY: (t1.clientY + t2.clientY) / 2,
+        }
+        return
+      }
+
+      pinch = null
+      const t = e.touches[0]
+      const { wx, wy } = getWorld(t)
+      const hit = hitTest(wx, wy)
+
+      if (hit) {
+        bodyDragRef.current = { id: hit.id, offsetX: wx - hit.x, offsetY: wy - hit.y, wasRunning: isRunningRef.current }
+        isRunningRef.current = false
+        longPressOrigin = { clientX: t.clientX, clientY: t.clientY }
+        longPressTimer = setTimeout(() => {
+          // Long-press: delete the body
+          bodiesRef.current = bodiesRef.current.filter(b => b.id !== hit.id)
+          setBodyCount(c => c - 1)
+          if (bodyDragRef.current?.id === hit.id) {
+            isRunningRef.current = bodyDragRef.current.wasRunning
+            bodyDragRef.current = null
+          }
+          if ('vibrate' in navigator) (navigator as Navigator & { vibrate: (n: number) => void }).vibrate(25)
+          longPressTimer = null
+          longPressOrigin = null
+        }, 580)
+      } else {
+        dragRef.current = { startX: wx, startY: wy, currentX: wx, currentY: wy }
+      }
+    }
+
+    const onMove = (e: TouchEvent) => {
+      e.preventDefault()
+
+      if (e.touches.length >= 2 && pinch) {
+        const t1 = e.touches[0], t2 = e.touches[1]
+        const dx = t2.clientX - t1.clientX, dy = t2.clientY - t1.clientY
+        const newDist = Math.sqrt(dx * dx + dy * dy)
+        const newMidX = (t1.clientX + t2.clientX) / 2
+        const newMidY = (t1.clientY + t2.clientY) / 2
+        const rect = canvas.getBoundingClientRect()
+        // Zoom centered on pinch midpoint
+        applyZoom(newDist / pinch.dist, newMidX - rect.left, newMidY - rect.top)
+        // Pan by midpoint translation
+        viewportRef.current = {
+          ...viewportRef.current,
+          x: viewportRef.current.x + (newMidX - pinch.midX),
+          y: viewportRef.current.y + (newMidY - pinch.midY),
+        }
+        pinch = { dist: newDist, midX: newMidX, midY: newMidY }
+        return
+      }
+
+      if (e.touches.length === 1) {
+        const t = e.touches[0]
+
+        // Cancel long-press if finger drifted more than 12 screen px
+        if (longPressOrigin) {
+          const mdx = t.clientX - longPressOrigin.clientX
+          const mdy = t.clientY - longPressOrigin.clientY
+          if (mdx * mdx + mdy * mdy > 144) cancelLongPress()
+        }
+
+        const { wx, wy } = getWorld(t)
+        if (bodyDragRef.current) {
+          const { id, offsetX, offsetY } = bodyDragRef.current
+          bodiesRef.current = bodiesRef.current.map(b =>
+            b.id === id ? { ...b, x: wx - offsetX, y: wy - offsetY, trail: [] } : b
+          )
+        } else if (dragRef.current) {
+          dragRef.current = { ...dragRef.current, currentX: wx, currentY: wy }
+        }
+      }
+    }
+
+    const onEnd = (e: TouchEvent) => {
+      e.preventDefault()
+      cancelLongPress()
+      if (e.touches.length < 2) pinch = null
+      if (e.touches.length > 0) return  // still touching
+
+      if (bodyDragRef.current) {
+        isRunningRef.current = bodyDragRef.current.wasRunning
+        bodyDragRef.current = null
+        return
+      }
+
+      const drag = dragRef.current
+      dragRef.current = null
+      if (!drag) return
+
+      const ct = e.changedTouches[0]
+      const rect = canvas.getBoundingClientRect()
+      if (ct.clientY - rect.top > rect.height - 160) return  // toolbar area
+
+      const vx = (drag.currentX - drag.startX) * VELOCITY_SCALE
+      const vy = (drag.currentY - drag.startY) * VELOCITY_SCALE
+      const mass = defaultMass(selectedTypeRef.current)
+      const body: Body = {
+        id: crypto.randomUUID(), type: selectedTypeRef.current,
+        x: drag.startX, y: drag.startY, vx, vy,
+        ax: 0, ay: 0, prevAx: 0, prevAy: 0,
+        mass, radius: defaultRadius(mass, selectedTypeRef.current),
+        trail: [], color: defaultColor(selectedTypeRef.current), pinned: false,
+      }
+      bodiesRef.current = [...bodiesRef.current, body]
+      setBodyCount(c => c + 1)
+    }
+
+    canvas.addEventListener('touchstart',  onStart, { passive: false })
+    canvas.addEventListener('touchmove',   onMove,  { passive: false })
+    canvas.addEventListener('touchend',    onEnd,   { passive: false })
+    canvas.addEventListener('touchcancel', onEnd,   { passive: false })
+    return () => {
+      canvas.removeEventListener('touchstart',  onStart)
+      canvas.removeEventListener('touchmove',   onMove)
+      canvas.removeEventListener('touchend',    onEnd)
+      canvas.removeEventListener('touchcancel', onEnd)
+    }
+  }, [applyZoom])
+
   // Global mouseup safety net — cleans up drag/pan if mouse released outside canvas
   useEffect(() => {
     const onGlobalUp = (e: MouseEvent) => {
@@ -696,7 +868,7 @@ export default function GravitySandbox() {
       <canvas
         ref={canvasRef}
         className="absolute inset-0"
-        style={{ cursor }}
+        style={{ cursor, touchAction: 'none' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
