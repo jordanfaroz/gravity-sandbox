@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Body, BodyType, defaultColor, defaultMass, defaultRadius, step } from '@/lib/physics'
-import { draw, DragState, Viewport, Particle, AbsorptionAnim } from '@/lib/renderer'
+import { draw, DragState, Viewport, Particle, AbsorptionAnim, SupernovaAnim } from '@/lib/renderer'
 import { encodeBodies, decodeBodies } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import Toolbar from './toolbar'
@@ -33,6 +33,7 @@ export default function GravitySandbox() {
   const panRef = useRef<{ startX: number; startY: number; vpX: number; vpY: number } | null>(null)
   const particlesRef = useRef<Particle[]>([])
   const absorptionsRef = useRef<AbsorptionAnim[]>([])
+  const supernovasRef = useRef<SupernovaAnim[]>([])
   const shakeRef = useRef({ x: 0, y: 0 })
 
   // React state for UI only
@@ -93,6 +94,103 @@ export default function GravitySandbox() {
         bodiesRef.current = bodies
 
         for (const ev of collisions) {
+          // Supernova: star + star collision — unique massive explosion
+          if (ev.absorberType === 'star' && ev.absorbedType === 'star') {
+            const R = ev.radius
+            const px = particlesRef.current
+
+            // Massive screen shake
+            const sn = 45
+            shakeRef.current.x += (Math.random() - 0.5) * sn * 2
+            shakeRef.current.y += (Math.random() - 0.5) * sn * 2
+
+            // Persistent expanding nebula ring
+            supernovasRef.current.push({
+              x: ev.x, y: ev.y,
+              color: ev.color,
+              life: 1, decay: 0.003,
+              maxRadius: 360 + R * 3,
+            })
+
+            // Three sequential flash layers — core, expanding halo, outer bloom
+            px.push({ kind: 'flash', x: ev.x, y: ev.y, vx: 0, vy: 0, life: 1,   decay: 0.07,  color: '#ffffff',  size: R * 5   })
+            px.push({ kind: 'flash', x: ev.x, y: ev.y, vx: 0, vy: 0, life: 0.8, decay: 0.04,  color: ev.color,   size: R * 11  })
+            px.push({ kind: 'flash', x: ev.x, y: ev.y, vx: 0, vy: 0, life: 0.5, decay: 0.022, color: '#ff8844',  size: R * 20  })
+
+            // Six shockwave rings at different sizes and speeds
+            for (let ri = 0; ri < 6; ri++) {
+              px.push({
+                kind: 'shockwave', x: ev.x, y: ev.y, vx: 0, vy: 0,
+                life: 1 - ri * 0.07, decay: 0.016 + ri * 0.007,
+                color: ri < 2 ? '#ffffff' : ri < 4 ? ev.color : '#aa88ff',
+                size: 0, startRadius: R * 0.4,
+                endRadius: 120 + ri * 90,
+              })
+            }
+
+            // 70 sparks — dense radial burst
+            for (let i = 0; i < 70; i++) {
+              const a = Math.random() * Math.PI * 2
+              const spd = 3 + Math.random() * 14
+              const c = Math.random() < 0.25 ? '#ffffff' : Math.random() < 0.45 ? '#ffee66' : Math.random() < 0.6 ? ev.color : '#ffaa44'
+              px.push({ kind: 'spark', x: ev.x, y: ev.y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life: 1, decay: 0.01 + Math.random() * 0.018, color: c, size: 0.8 + Math.random() * 1.6 })
+            }
+
+            // 22 large fireballs in supernova palette (white-hot → orange-red)
+            const snFireColors = ['#ffffff', '#ffffcc', '#ffee55', '#ffbb22', '#ff7700', '#ff3300', ev.color]
+            for (let i = 0; i < 22; i++) {
+              const a = Math.random() * Math.PI * 2
+              const spd = 1 + Math.random() * 4.5
+              px.push({
+                kind: 'fire',
+                x: ev.x + (Math.random() - 0.5) * R, y: ev.y + (Math.random() - 0.5) * R,
+                vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
+                life: 1, decay: 0.01 + Math.random() * 0.014,
+                color: snFireColors[Math.floor(Math.random() * snFireColors.length)],
+                size: R * 0.7 + Math.random() * R * 1.3,
+              })
+            }
+
+            // 12 large nebula clouds — purple, blue, teal (real nebula colors)
+            const nebulaColors = ['#9944cc', '#4488ff', '#44ccff', '#ff6644', '#cc44aa']
+            for (let i = 0; i < 12; i++) {
+              const a = Math.random() * Math.PI * 2
+              const spd = 0.3 + Math.random() * 1.4
+              px.push({
+                kind: 'smoke',
+                x: ev.x + (Math.random() - 0.5) * R * 2, y: ev.y + (Math.random() - 0.5) * R * 2,
+                vx: Math.cos(a) * spd, vy: Math.sin(a) * spd,
+                life: 1, decay: 0.003 + Math.random() * 0.004,
+                color: nebulaColors[Math.floor(Math.random() * nebulaColors.length)],
+                size: R * 2 + Math.random() * R * 2.5,
+              })
+            }
+
+            // Debris asteroids ejected from the explosion
+            if (bodiesRef.current.length < MAX_BODIES) {
+              const debrisColors = ['#9a9a9a', '#8b8075', '#a09488', '#b0a89a']
+              const debrisCount = 5 + Math.floor(Math.random() * 4)
+              const newDebris: Body[] = []
+              for (let i = 0; i < debrisCount; i++) {
+                const a = Math.random() * Math.PI * 2
+                const ejectSpeed = 7 + Math.random() * 14
+                const spawnDist = R * 2.5 + Math.random() * R * 3
+                const mass = 2 + Math.random() * 6
+                newDebris.push({
+                  id: crypto.randomUUID(), type: 'asteroid',
+                  x: ev.x + Math.cos(a) * spawnDist, y: ev.y + Math.sin(a) * spawnDist,
+                  vx: ev.vx + Math.cos(a) * ejectSpeed, vy: ev.vy + Math.sin(a) * ejectSpeed,
+                  ax: 0, ay: 0, prevAx: 0, prevAy: 0,
+                  mass, radius: Math.max(3, defaultRadius(mass, 'asteroid')),
+                  trail: [], color: debrisColors[Math.floor(Math.random() * debrisColors.length)], pinned: false,
+                })
+              }
+              bodiesRef.current = [...bodiesRef.current, ...newDebris]
+              setBodyCount(c => c + newDebris.length)
+            }
+            continue
+          }
+
           // Black hole absorbing a star → slow spiral-in animation, skip normal explosion
           if (ev.absorberType === 'blackhole' && ev.absorbedType === 'star') {
             const initAngle = Math.atan2(ev.absorbedY - ev.y, ev.absorbedX - ev.x)
@@ -246,6 +344,9 @@ export default function GravitySandbox() {
       }
       absorptionsRef.current = absorptionsRef.current.filter(a => a.life > 0)
 
+      for (const s of supernovasRef.current) s.life -= s.decay * dt
+      supernovasRef.current = supernovasRef.current.filter(s => s.life > 0)
+
       // Decay shake and tick + cull particles every frame
       shakeRef.current.x *= 0.82
       shakeRef.current.y *= 0.82
@@ -270,7 +371,7 @@ export default function GravitySandbox() {
           x: vp.x + shakeRef.current.x,
           y: vp.y + shakeRef.current.y,
         }
-        draw(ctx, bodiesRef.current, particlesRef.current, absorptionsRef.current, dragRef.current, hoveredIdRef.current, shakeViewport)
+        draw(ctx, bodiesRef.current, particlesRef.current, absorptionsRef.current, supernovasRef.current, dragRef.current, hoveredIdRef.current, shakeViewport)
       }
 
       rafRef.current = requestAnimationFrame(tick)

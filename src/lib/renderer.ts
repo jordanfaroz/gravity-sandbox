@@ -43,11 +43,21 @@ export interface AbsorptionAnim {
   flashSpawned: boolean
 }
 
+export interface SupernovaAnim {
+  x: number
+  y: number
+  color: string
+  life: number      // 1 → 0
+  decay: number
+  maxRadius: number // world-space pixels the ring expands to
+}
+
 export function draw(
   ctx: CanvasRenderingContext2D,
   bodies: Body[],
   particles: Particle[],
   absorptions: AbsorptionAnim[],
+  supernovas: SupernovaAnim[],
   dragState: DragState | null,
   hoveredId: string | null,
   viewport: Viewport
@@ -59,6 +69,8 @@ export function draw(
   ctx.save()
   ctx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y)
 
+  // Supernova nebulae are the furthest-back layer
+  for (const s of supernovas) drawSupernova(ctx, s)
   for (const b of bodies) drawTrail(ctx, b)
   for (const p of particles) { if (p.kind === 'smoke') drawParticle(ctx, p) }
   // Absorption ghosts drawn before bodies so the BH event horizon naturally covers them
@@ -350,6 +362,57 @@ function drawAbsorptionGhost(ctx: CanvasRenderingContext2D, a: AbsorptionAnim): 
     ctx.stroke()
     ctx.restore()
   }
+}
+
+function drawSupernova(ctx: CanvasRenderingContext2D, s: SupernovaAnim): void {
+  const progress = 1 - s.life
+  if (progress <= 0) return
+  // Ring expands fast at first (Sedov-Taylor blast), slows as it cools
+  const r = s.maxRadius * Math.pow(progress, 0.55) + 4
+  const innerR = r * (0.45 + progress * 0.3)  // hollow centre grows over time
+  if (r < 2) return
+
+  const alpha = Math.pow(s.life, 1.3) * 0.85
+
+  ctx.save()
+
+  // Nebula shell — radial gradient from hollow centre to outer edge
+  ctx.globalAlpha = alpha
+  const shell = ctx.createRadialGradient(s.x, s.y, innerR, s.x, s.y, r)
+  shell.addColorStop(0,    'transparent')
+  shell.addColorStop(0.35, s.color + '18')
+  shell.addColorStop(0.65, '#ff660028')
+  shell.addColorStop(0.82, s.color + '55')
+  shell.addColorStop(0.93, '#ffffff66')  // bright shock edge
+  shell.addColorStop(1,    'transparent')
+  ctx.fillStyle = shell
+  ctx.beginPath()
+  ctx.arc(s.x, s.y, r, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Blue-purple outer halo — real supernova remnants glow in synchrotron blue
+  ctx.globalAlpha = alpha * 0.5
+  const outerR = r * 1.12
+  const halo = ctx.createRadialGradient(s.x, s.y, r * 0.88, s.x, s.y, outerR)
+  halo.addColorStop(0, '#7755ffcc')
+  halo.addColorStop(0.45, '#4488ff44')
+  halo.addColorStop(1, 'transparent')
+  ctx.fillStyle = halo
+  ctx.beginPath()
+  ctx.arc(s.x, s.y, outerR, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Crisp leading shock-front ring
+  if (s.life > 0.1) {
+    ctx.globalAlpha = s.life * 0.8
+    ctx.strokeStyle = '#ffffffcc'
+    ctx.lineWidth = 2 * s.life
+    ctx.beginPath()
+    ctx.arc(s.x, s.y, r * 0.97, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+
+  ctx.restore()
 }
 
 function drawArrow(ctx: CanvasRenderingContext2D, drag: DragState): void {
