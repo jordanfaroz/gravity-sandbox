@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Body, BodyType, defaultColor, defaultMass, defaultRadius, step } from '@/lib/physics'
-import { draw, DragState, Viewport, Particle } from '@/lib/renderer'
+import { draw, DragState, Viewport, Particle, AbsorptionAnim } from '@/lib/renderer'
 import { encodeBodies, decodeBodies } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import Toolbar from './toolbar'
@@ -32,6 +32,7 @@ export default function GravitySandbox() {
   // Middle-mouse pan state
   const panRef = useRef<{ startX: number; startY: number; vpX: number; vpY: number } | null>(null)
   const particlesRef = useRef<Particle[]>([])
+  const absorptionsRef = useRef<AbsorptionAnim[]>([])
   const shakeRef = useRef({ x: 0, y: 0 })
 
   // React state for UI only
@@ -92,6 +93,24 @@ export default function GravitySandbox() {
         bodiesRef.current = bodies
 
         for (const ev of collisions) {
+          // Black hole absorbing a star → slow spiral-in animation, skip normal explosion
+          if (ev.absorberType === 'blackhole' && ev.absorbedType === 'star') {
+            const initAngle = Math.atan2(ev.absorbedY - ev.y, ev.absorbedX - ev.x)
+            const initDist = Math.hypot(ev.absorbedX - ev.x, ev.absorbedY - ev.y)
+            absorptionsRef.current.push({
+              bhId: ev.survivorId,
+              bhX: ev.x, bhY: ev.y,
+              starColor: ev.absorbedColor,
+              startRadius: ev.radius,
+              angle: initAngle,
+              orbitRadius: Math.max(ev.radius * 4, initDist),
+              life: 1, decay: 0.004,
+              trail: [],
+              flashSpawned: false,
+            })
+            continue
+          }
+
           // Cap visual R so a large star doesn't produce screen-filling effects
           const R = Math.max(8, Math.min(ev.radius, 32))
           const ss = Math.max(0.5, Math.min(ev.relativeSpeed * 0.15, 2.5))
@@ -203,6 +222,30 @@ export default function GravitySandbox() {
         }
       }
 
+      // Step absorption animations — track the BH as it moves, spiral the ghost inward
+      for (const a of absorptionsRef.current) {
+        const bh = bodiesRef.current.find(b => b.id === a.bhId)
+        if (bh) { a.bhX = bh.x; a.bhY = bh.y }
+        const progress = 1 - a.life
+        a.angle += (0.06 + progress * 0.35) * dt        // accelerates as orbit tightens
+        a.orbitRadius *= Math.pow(0.990, dt)             // exponential inspiral
+        a.life -= a.decay * dt
+        const gx = a.bhX + Math.cos(a.angle) * a.orbitRadius
+        const gy = a.bhY + Math.sin(a.angle) * a.orbitRadius
+        a.trail.push({ x: gx, y: gy })
+        if (a.trail.length > 55) a.trail.shift()
+        // Final flash as the star disappears into the horizon
+        if (!a.flashSpawned && a.life < 0.12) {
+          a.flashSpawned = true
+          particlesRef.current.push({
+            kind: 'flash', x: a.bhX, y: a.bhY, vx: 0, vy: 0,
+            life: 1, decay: 0.055, color: a.starColor,
+            size: a.startRadius * 2.5,
+          })
+        }
+      }
+      absorptionsRef.current = absorptionsRef.current.filter(a => a.life > 0)
+
       // Decay shake and tick + cull particles every frame
       shakeRef.current.x *= 0.82
       shakeRef.current.y *= 0.82
@@ -227,7 +270,7 @@ export default function GravitySandbox() {
           x: vp.x + shakeRef.current.x,
           y: vp.y + shakeRef.current.y,
         }
-        draw(ctx, bodiesRef.current, particlesRef.current, dragRef.current, hoveredIdRef.current, shakeViewport)
+        draw(ctx, bodiesRef.current, particlesRef.current, absorptionsRef.current, dragRef.current, hoveredIdRef.current, shakeViewport)
       }
 
       rafRef.current = requestAnimationFrame(tick)
@@ -326,7 +369,8 @@ export default function GravitySandbox() {
     const hit = bodiesRef.current.find(b => {
       const dx = b.x - wx
       const dy = b.y - wy
-      return dx * dx + dy * dy < (b.radius + 10) * (b.radius + 10)
+      const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
+      return dx * dx + dy * dy < gr * gr
     })
 
     if (hit) {
@@ -376,7 +420,8 @@ export default function GravitySandbox() {
     const hit = bodiesRef.current.find(b => {
       const dx = b.x - wx
       const dy = b.y - wy
-      return dx * dx + dy * dy < (b.radius + 10) * (b.radius + 10)
+      const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
+      return dx * dx + dy * dy < gr * gr
     }) ?? null
 
     hoveredIdRef.current = hit?.id ?? null
@@ -432,7 +477,7 @@ export default function GravitySandbox() {
         radius: defaultRadius(mass, selectedType),
         trail: [],
         color: defaultColor(selectedType),
-        pinned: selectedType === 'star',
+        pinned: false,
       }
 
       bodiesRef.current = [...bodiesRef.current, body]
@@ -449,7 +494,8 @@ export default function GravitySandbox() {
     const hit = bodiesRef.current.find(b => {
       const dx = b.x - wx
       const dy = b.y - wy
-      return dx * dx + dy * dy < (b.radius + 10) * (b.radius + 10)
+      const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
+      return dx * dx + dy * dy < gr * gr
     })
 
     if (hit) {

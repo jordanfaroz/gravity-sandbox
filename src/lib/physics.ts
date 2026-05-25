@@ -20,6 +20,7 @@ export interface Body {
 
 const SOFTENING_SQ = 50
 const TRAIL_LENGTH = 150
+const COLLISION_DAMPING = 0.72  // merged body retains 72% of momentum — rest lost as heat/radiation
 
 export function defaultMass(type: BodyType): number {
   switch (type) {
@@ -96,6 +97,12 @@ export interface CollisionEvent {
   vx: number
   vy: number
   spawnDebris: boolean  // false when both bodies are asteroids — prevents chain reactions
+  absorberType: BodyType
+  absorbedType: BodyType
+  absorbedColor: string
+  absorbedX: number
+  absorbedY: number
+  survivorId: string
 }
 
 export function step(
@@ -155,26 +162,42 @@ function handleCollisions(bodies: Body[]): { bodies: Body[]; collisions: Collisi
         const mergedVx = (bodies[i].vx * bodies[i].mass + bodies[j].vx * bodies[j].mass) / totalMass
         const mergedVy = (bodies[i].vy * bodies[i].mass + bodies[j].vy * bodies[j].mass) / totalMass
 
+        // Heavier body survives and keeps its type — outcome must not depend on placement order
+        const sur = bodies[i].mass >= bodies[j].mass ? i : j
+        const abs = sur === i ? j : i
+
         collisions.push({
           x: cx,
           y: cy,
-          color: bodies[i].mass >= bodies[j].mass ? bodies[i].color : bodies[j].color,
+          color: bodies[sur].color,
           relativeSpeed: Math.sqrt(dvx * dvx + dvy * dvy),
           radius: Math.max(bodies[i].radius, bodies[j].radius),
           vx: mergedVx,
           vy: mergedVy,
           spawnDebris: bodies[i].type !== 'asteroid' && bodies[j].type !== 'asteroid',
+          absorberType: bodies[sur].type,
+          absorbedType: bodies[abs].type,
+          absorbedColor: bodies[abs].color,
+          absorbedX: bodies[abs].x,
+          absorbedY: bodies[abs].y,
+          survivorId: bodies[sur].id,
         })
 
-        // Conserve momentum
-        bodies[i].vx = mergedVx
-        bodies[i].vy = mergedVy
-        // Center of mass position
-        bodies[i].x = cx
-        bodies[i].y = cy
-        bodies[i].mass = totalMass
-        bodies[i].radius = defaultRadius(totalMass, bodies[i].type)
-        toRemove.add(j)
+        // Black holes don't get kicked — absorbed body's kinetic energy radiates away.
+        // All other merges apply COLLISION_DAMPING so the result doesn't shoot off.
+        const kickFraction = bodies[abs].mass / totalMass
+        if (bodies[sur].type !== 'blackhole' || kickFraction >= 0.4) {
+          bodies[sur].vx = mergedVx * COLLISION_DAMPING
+          bodies[sur].vy = mergedVy * COLLISION_DAMPING
+        }
+        bodies[sur].x = cx
+        bodies[sur].y = cy
+        bodies[sur].mass = totalMass
+        bodies[sur].radius = defaultRadius(totalMass, bodies[sur].type)
+        toRemove.add(abs)
+
+        // If i was absorbed, stop checking further j against it
+        if (abs === i) break
       }
     }
   }

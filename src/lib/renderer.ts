@@ -29,10 +29,25 @@ export interface Particle {
   endRadius?: number    // shockwave: final ring radius
 }
 
+export interface AbsorptionAnim {
+  bhId: string
+  bhX: number
+  bhY: number
+  starColor: string
+  startRadius: number
+  angle: number        // current orbital angle
+  orbitRadius: number  // current distance from BH centre
+  life: number         // 1 → 0
+  decay: number
+  trail: { x: number; y: number }[]
+  flashSpawned: boolean
+}
+
 export function draw(
   ctx: CanvasRenderingContext2D,
   bodies: Body[],
   particles: Particle[],
+  absorptions: AbsorptionAnim[],
   dragState: DragState | null,
   hoveredId: string | null,
   viewport: Viewport
@@ -45,8 +60,9 @@ export function draw(
   ctx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y)
 
   for (const b of bodies) drawTrail(ctx, b)
-  // Smoke behind bodies; everything else in front
   for (const p of particles) { if (p.kind === 'smoke') drawParticle(ctx, p) }
+  // Absorption ghosts drawn before bodies so the BH event horizon naturally covers them
+  for (const a of absorptions) drawAbsorptionGhost(ctx, a)
   for (const b of bodies) drawBody(ctx, b, b.id === hoveredId)
   for (const p of particles) { if (p.kind !== 'smoke') drawParticle(ctx, p) }
   if (dragState) drawArrow(ctx, dragState)
@@ -275,6 +291,65 @@ function drawHoverRing(ctx: CanvasRenderingContext2D, b: Body): void {
   ctx.arc(b.x, b.y, b.radius + 9, 0, Math.PI * 2)
   ctx.stroke()
   ctx.restore()
+}
+
+function drawAbsorptionGhost(ctx: CanvasRenderingContext2D, a: AbsorptionAnim): void {
+  if (a.trail.length === 0) return
+  const { x: gx, y: gy } = a.trail[a.trail.length - 1]
+  const progress = 1 - a.life
+  const r = a.startRadius * a.life
+
+  // Comet-tail: draw trail segments fading toward the oldest point
+  ctx.save()
+  for (let i = 1; i < a.trail.length; i++) {
+    const t = i / a.trail.length
+    ctx.globalAlpha = t * a.life * 0.6
+    ctx.strokeStyle = a.starColor
+    ctx.lineWidth = Math.max(0.5, r * t * 0.85)
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(a.trail[i - 1].x, a.trail[i - 1].y)
+    ctx.lineTo(a.trail[i].x, a.trail[i].y)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  // Ghost star glow — shrinks and dims as life falls
+  if (r > 0.3) {
+    const glowR = r * 3.5
+    ctx.save()
+    ctx.globalAlpha = a.life * a.life
+    const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, glowR)
+    g.addColorStop(0,    '#ffffff')
+    g.addColorStop(0.1,  '#fffdf0')
+    g.addColorStop(0.3,  a.starColor)
+    g.addColorStop(0.7,  a.starColor + '55')
+    g.addColorStop(1,    'transparent')
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(gx, gy, glowR, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+
+  // Accretion stream: bright tendril from ghost toward BH, appears after halfway point
+  if (progress > 0.35) {
+    const alpha = Math.min(1, (progress - 0.35) / 0.4) * a.life * 0.75
+    ctx.save()
+    ctx.globalAlpha = alpha
+    ctx.lineWidth = Math.max(0.5, r * 0.7)
+    ctx.lineCap = 'round'
+    const sg = ctx.createLinearGradient(gx, gy, a.bhX, a.bhY)
+    sg.addColorStop(0,   a.starColor)
+    sg.addColorStop(0.5, a.starColor + '88')
+    sg.addColorStop(1,   '#ffffff33')
+    ctx.strokeStyle = sg
+    ctx.beginPath()
+    ctx.moveTo(gx, gy)
+    ctx.lineTo(a.bhX, a.bhY)
+    ctx.stroke()
+    ctx.restore()
+  }
 }
 
 function drawArrow(ctx: CanvasRenderingContext2D, drag: DragState): void {

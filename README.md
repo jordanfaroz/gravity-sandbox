@@ -22,7 +22,37 @@ ax_new  =  recompute forces
 vx     +=  ½·(ax_old + ax_new)·dt
 ```
 
-When two bodies overlap (distance < sum of radii × 0.75), they merge: momentum is conserved, position moves to the center of mass, and the smaller body is absorbed. Real debris asteroids are ejected outward from the collision site.
+When two bodies overlap (distance < sum of radii × 0.75), they merge: the **heavier body always survives** and keeps its type. Momentum is conserved (with an inelastic damping factor so the merged body doesn't shoot off), position moves to the center of mass, and debris asteroids are ejected outward.
+
+## Collision behaviour
+
+- **Heavier body wins** — outcome is independent of placement order
+- **Inelastic damping** — merged body retains 72% of momentum; the rest radiates away as heat
+- **Black holes don't get kicked** — a BH absorbing a lighter body keeps its own velocity unchanged; only BH-on-BH mergers conserve momentum
+- **Black hole absorbing a star** — triggers a multi-second spiral-in animation instead of an instant explosion (see below)
+
+## Black hole absorption animation
+
+When a black hole absorbs a star the physics merge is instant but a cinematic sequence plays over ~4 seconds:
+
+1. A ghost star spawns at the star's last position and begins spiralling inward with an accelerating orbit
+2. A comet-tail trail follows the ghost along the arc
+3. Past the halfway point a bright accretion stream stretches from the ghost to the black hole
+4. As the ghost reaches the event horizon a final flash bloom fires and the star disappears
+
+## Collision effects (general)
+
+When two non-asteroid bodies collide:
+
+- **Flash bloom** — large radial gradient burst at the impact site
+- **Shockwave rings** — two expanding rings that fade as they travel outward
+- **Sparks** — 14–20 motion-blurred streaks
+- **Fire** — soft radial-gradient fireballs in orange/yellow/white
+- **Smoke** — slowly expanding dark clouds
+- **Screen shake** — viewport jolts proportional to impact energy
+- **Debris asteroids** — 3–5 real physics bodies ejected from the collision
+
+Asteroid absorptions show only a small grey sparkle to prevent chain reactions.
 
 ## File structure
 
@@ -39,7 +69,7 @@ src/
 │       └── liquid-glass-button.tsx  # Glass-morphism button with SVG filter
 └── lib/
     ├── physics.ts            # Body type, step(), Verlet integrator, collisions
-    ├── renderer.ts           # Canvas drawing: glow, trails, accretion rings, particles
+    ├── renderer.ts           # Canvas drawing: glow, trails, accretion rings, particles, absorption
     ├── serialize.ts          # Compact base64 URL-hash encode/decode
     ├── presets.ts            # Five preset configurations
     └── utils.ts              # cn() helper (clsx + tailwind-merge)
@@ -69,25 +99,11 @@ src/
 | Pause / resume | Toolbar button |
 | Share | Encodes all bodies into the URL hash, copies link to clipboard |
 
-## Collision effects
-
-When two non-asteroid bodies collide a full explosion fires:
-
-- **Flash bloom** — a large radial gradient burst at the impact site
-- **Shockwave rings** — two expanding rings that fade as they travel outward
-- **Sparks** — 14–20 motion-blurred streaks flying outward
-- **Fire** — soft radial-gradient fireballs in orange/yellow/white
-- **Smoke** — slowly expanding dark clouds that linger
-- **Screen shake** — viewport jolts proportional to impact energy
-- **Debris asteroids** — 3–5 real physics bodies ejected from the collision, visible as grey rocks that then orbit, escape, or get recaptured
-
-Asteroid-on-body absorptions show only a small grey sparkle to avoid chain reactions.
-
 ## Viewport
 
 - Zoom range: **0.04× – 25×**, pivot at the cursor
 - Middle-mouse drag to pan
-- Zoom widget at the top center (− 1.00× +)
+- Zoom widget at the top centre (− 1.00× +)
 
 ## Shareable URLs
 
