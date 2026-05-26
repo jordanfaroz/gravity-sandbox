@@ -205,3 +205,60 @@ function handleCollisions(bodies: Body[]): { bodies: Body[]; collisions: Collisi
   if (toRemove.size === 0) return { bodies, collisions }
   return { bodies: bodies.filter((_, i) => !toRemove.has(i)), collisions }
 }
+
+// Predict the path of a new body given the current frozen gravitational field.
+// Uses Velocity Verlet (symplectic) so stable orbits stay closed in the preview.
+export function predictPath(
+  bodies: Body[],
+  newBody: { x: number; y: number; vx: number; vy: number; mass: number; radius: number },
+  G: number,
+  steps = 120,
+  dtPerStep = 2.5,
+): { x: number; y: number }[] {
+  let x = newBody.x, y = newBody.y, vx = newBody.vx, vy = newBody.vy
+
+  // Compute initial acceleration from the frozen field
+  let ax = 0, ay = 0
+  for (const b of bodies) {
+    const dx = b.x - x, dy = b.y - y
+    const distSq = dx * dx + dy * dy + SOFTENING_SQ
+    const dist = Math.sqrt(distSq)
+    ax += G * b.mass * dx / (distSq * dist)
+    ay += G * b.mass * dy / (distSq * dist)
+  }
+
+  const path: { x: number; y: number }[] = []
+  const rNew = newBody.radius
+
+  for (let s = 0; s < steps; s++) {
+    // Verlet step 1 — update position
+    x += vx * dtPerStep + 0.5 * ax * dtPerStep * dtPerStep
+    y += vy * dtPerStep + 0.5 * ay * dtPerStep * dtPerStep
+
+    const prevAx = ax, prevAy = ay
+    ax = 0; ay = 0
+
+    // Recompute acceleration at new position (bodies frozen)
+    for (const b of bodies) {
+      const dx = b.x - x, dy = b.y - y
+      const distSq = dx * dx + dy * dy + SOFTENING_SQ
+      const dist = Math.sqrt(distSq)
+      ax += G * b.mass * dx / (distSq * dist)
+      ay += G * b.mass * dy / (distSq * dist)
+    }
+
+    // Verlet step 2 — update velocity with averaged acceleration
+    vx += 0.5 * (prevAx + ax) * dtPerStep
+    vy += 0.5 * (prevAy + ay) * dtPerStep
+
+    path.push({ x, y })
+
+    // Stop path if new body would be absorbed by an existing one
+    for (const b of bodies) {
+      const dx = b.x - x, dy = b.y - y
+      if (dx * dx + dy * dy < (b.radius + rNew) * (b.radius + rNew) * 0.5625) return path
+    }
+  }
+
+  return path
+}

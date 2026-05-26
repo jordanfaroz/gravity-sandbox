@@ -58,6 +58,7 @@ export function draw(
   particles: Particle[],
   absorptions: AbsorptionAnim[],
   supernovas: SupernovaAnim[],
+  predicted: { path: { x: number; y: number }[]; color: string } | null,
   dragState: DragState | null,
   hoveredId: string | null,
   viewport: Viewport
@@ -72,6 +73,7 @@ export function draw(
   // Supernova nebulae are the furthest-back layer
   for (const s of supernovas) drawSupernova(ctx, s)
   for (const b of bodies) drawTrail(ctx, b)
+  if (predicted) drawPredicted(ctx, predicted)
   for (const p of particles) { if (p.kind === 'smoke') drawParticle(ctx, p) }
   // Absorption ghosts drawn before bodies so the BH event horizon naturally covers them
   for (const a of absorptions) drawAbsorptionGhost(ctx, a)
@@ -412,6 +414,21 @@ function drawSupernova(ctx: CanvasRenderingContext2D, s: SupernovaAnim): void {
     ctx.stroke()
   }
 
+  ctx.restore()
+}
+
+function drawPredicted(ctx: CanvasRenderingContext2D, predicted: { path: { x: number; y: number }[]; color: string }): void {
+  const { path, color } = predicted
+  if (path.length === 0) return
+  ctx.save()
+  for (let i = 0; i < path.length; i += 2) {
+    const alpha = (1 - i / path.length) * 0.72
+    ctx.globalAlpha = alpha
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.arc(path[i].x, path[i].y, 2.5, 0, Math.PI * 2)
+    ctx.fill()
+  }
   ctx.restore()
 }
 

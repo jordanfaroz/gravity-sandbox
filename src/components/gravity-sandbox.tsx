@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Body, BodyType, defaultColor, defaultMass, defaultRadius, step } from '@/lib/physics'
+import { Body, BodyType, defaultColor, defaultMass, defaultRadius, predictPath, step } from '@/lib/physics'
 import { draw, DragState, Viewport, Particle, AbsorptionAnim, SupernovaAnim } from '@/lib/renderer'
 import { encodeBodies, decodeBodies } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
@@ -14,6 +14,10 @@ const MIN_ZOOM = 0.04
 const MAX_ZOOM = 25
 const MAX_BODIES = 45
 const MAX_PARTICLES = 300
+const MAX_HISTORY = 300
+const PREVIEW_COLORS: Record<BodyType, string> = {
+  star: '#FFD700', planet: '#4fa3e0', blackhole: '#9944ff', asteroid: '#9a9a9a',
+}
 
 export default function GravitySandbox() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -35,6 +39,11 @@ export default function GravitySandbox() {
   const particlesRef = useRef<Particle[]>([])
   const absorptionsRef = useRef<AbsorptionAnim[]>([])
   const supernovasRef = useRef<SupernovaAnim[]>([])
+  const predictedRef = useRef<{ path: { x: number; y: number }[]; color: string } | null>(null)
+  const historyRef = useRef<Body[][]>([])
+  const isRewindingRef = useRef(false)
+  const followIdRef = useRef<string | null>(null)
+  const followedTypeRef = useRef<BodyType | null>(null)
   const shakeRef = useRef({ x: 0, y: 0 })
 
   // Mirror selectedType in a ref so touch handlers (inside useEffect) never go stale
@@ -53,6 +62,8 @@ export default function GravitySandbox() {
   const [showHelp, setShowHelp] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [cursor, setCursor] = useState<string>('crosshair')
+  const [isRewinding, setIsRewinding] = useState(false)
+  const [followedBody, setFollowedBody] = useState<BodyType | null>(null)
 
   // Convert screen coords → world coords using current viewport
   const screenToWorld = useCallback((sx: number, sy: number) => {
@@ -95,7 +106,21 @@ export default function GravitySandbox() {
 
       const dt = (delta / 16.667) * speedRef.current
 
-      if (isRunningRef.current && delta > 0) {
+      if (isRewindingRef.current) {
+        if (historyRef.current.length > 0) {
+          const snapshot = historyRef.current.pop()!
+          bodiesRef.current = snapshot
+          setBodyCount(snapshot.length)
+        }
+        particlesRef.current = []
+        absorptionsRef.current = []
+        supernovasRef.current = []
+        predictedRef.current = null
+      }
+
+      if (!isRewindingRef.current && isRunningRef.current && delta > 0) {
+        historyRef.current.push(bodiesRef.current.map(b => ({ ...b, trail: [] })))
+        if (historyRef.current.length > MAX_HISTORY) historyRef.current.shift()
         const { bodies, collisions } = step(bodiesRef.current, GRef.current, dt)
         bodiesRef.current = bodies
 
@@ -326,6 +351,26 @@ export default function GravitySandbox() {
         }
       }
 
+      // Predicted orbit preview — fading dots showing where a new body will travel
+      if (!isRewindingRef.current) {
+        if (dragRef.current && !bodyDragRef.current) {
+          const drag = dragRef.current
+          const type = selectedTypeRef.current
+          const mass = defaultMass(type)
+          predictedRef.current = {
+            path: predictPath(bodiesRef.current, {
+              x: drag.startX, y: drag.startY,
+              vx: (drag.currentX - drag.startX) * VELOCITY_SCALE,
+              vy: (drag.currentY - drag.startY) * VELOCITY_SCALE,
+              mass, radius: defaultRadius(mass, type),
+            }, GRef.current),
+            color: PREVIEW_COLORS[type],
+          }
+        } else {
+          predictedRef.current = null
+        }
+      }
+
       // Step absorption animations — track the BH as it moves, spiral the ghost inward
       for (const a of absorptionsRef.current) {
         const bh = bodiesRef.current.find(b => b.id === a.bhId)
@@ -368,6 +413,26 @@ export default function GravitySandbox() {
         }))
         .filter(p => p.life > 0)
 
+      // Follow camera — lock viewport to center on the followed body each frame
+      if (followIdRef.current) {
+        const fb = bodiesRef.current.find(b => b.id === followIdRef.current)
+        if (fb) {
+          if (fb.type !== followedTypeRef.current) {
+            followedTypeRef.current = fb.type
+            setFollowedBody(fb.type)
+          }
+          viewportRef.current = {
+            ...viewportRef.current,
+            x: canvas!.width / 2 - fb.x * viewportRef.current.scale,
+            y: canvas!.height / 2 - fb.y * viewportRef.current.scale,
+          }
+        } else {
+          followIdRef.current = null
+          followedTypeRef.current = null
+          setFollowedBody(null)
+        }
+      }
+
       const ctx = canvas!.getContext('2d')
       if (ctx) {
         // Apply screen shake as a per-frame viewport offset (doesn't mutate viewportRef)
@@ -377,7 +442,7 @@ export default function GravitySandbox() {
           x: vp.x + shakeRef.current.x,
           y: vp.y + shakeRef.current.y,
         }
-        draw(ctx, bodiesRef.current, particlesRef.current, absorptionsRef.current, supernovasRef.current, dragRef.current, hoveredIdRef.current, shakeViewport)
+        draw(ctx, bodiesRef.current, particlesRef.current, absorptionsRef.current, supernovasRef.current, predictedRef.current, dragRef.current, hoveredIdRef.current, shakeViewport)
       }
 
       rafRef.current = requestAnimationFrame(tick)
@@ -621,12 +686,43 @@ export default function GravitySandbox() {
     return () => document.removeEventListener('mouseup', onGlobalUp)
   }, [])
 
+  // Keyboard: hold R to rewind, Escape to stop following
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return
+      if (e.key === 'r' || e.key === 'R') {
+        isRewindingRef.current = true
+        setIsRewinding(true)
+      }
+      if (e.key === 'Escape') {
+        followIdRef.current = null
+        followedTypeRef.current = null
+        setFollowedBody(null)
+      }
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'r' || e.key === 'R') {
+        isRewindingRef.current = false
+        setIsRewinding(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [])
+
   // ── Mouse handlers ──────────────────────────────────────────────────────────
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Middle button: start pan
+    // Middle button: start pan (clears follow mode)
     if (e.button === 1) {
       e.preventDefault()
+      followIdRef.current = null
+      followedTypeRef.current = null
+      setFollowedBody(null)
       panRef.current = {
         startX: e.clientX,
         startY: e.clientY,
@@ -795,6 +891,26 @@ export default function GravitySandbox() {
     setCursor('crosshair')
   }, [])
 
+  const handleDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current!.getBoundingClientRect()
+    const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
+    const hit = bodiesRef.current.find(b => {
+      const dx = b.x - wx, dy = b.y - wy
+      const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
+      return dx * dx + dy * dy < gr * gr
+    }) ?? null
+    if (!hit) return
+    if (followIdRef.current === hit.id) {
+      followIdRef.current = null
+      followedTypeRef.current = null
+      setFollowedBody(null)
+    } else {
+      followIdRef.current = hit.id
+      followedTypeRef.current = hit.type
+      setFollowedBody(hit.type)
+    }
+  }, [screenToWorld])
+
   // ── Toolbar actions ──────────────────────────────────────────────────────────
 
   const pause = useCallback(() => {
@@ -812,6 +928,10 @@ export default function GravitySandbox() {
     setBodyCount(0)
     setHoveredBody(null)
     hoveredIdRef.current = null
+    historyRef.current = []
+    followIdRef.current = null
+    followedTypeRef.current = null
+    setFollowedBody(null)
     history.replaceState(null, '', window.location.pathname)
   }, [])
 
@@ -834,6 +954,10 @@ export default function GravitySandbox() {
       setBodyCount(bodies.length)
       setHoveredBody(null)
       hoveredIdRef.current = null
+      historyRef.current = []
+      followIdRef.current = null
+      followedTypeRef.current = null
+      setFollowedBody(null)
     },
     []
   )
@@ -876,6 +1000,7 @@ export default function GravitySandbox() {
         onMouseUp={handleMouseUp}
         onContextMenu={handleContextMenu}
         onMouseLeave={handleMouseLeave}
+        onDoubleClick={handleDoubleClick}
       />
 
       {/* Top-right: share badge + help button (stacked, no overlap) */}
@@ -921,6 +1046,36 @@ export default function GravitySandbox() {
           title="Zoom in"
         >+</button>
       </div>
+
+      {/* Status indicators: rewinding / follow camera */}
+      {(isRewinding || followedBody) && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 z-10 pointer-events-none">
+          {isRewinding && (
+            <div className="bg-purple-700/80 text-white text-xs px-4 py-1.5 rounded-full backdrop-blur-sm border border-purple-400/30 whitespace-nowrap">
+              ⏪ Rewinding…
+            </div>
+          )}
+          {followedBody && (
+            <div className="bg-blue-700/70 text-white text-xs px-4 py-1.5 rounded-full backdrop-blur-sm border border-blue-400/30 whitespace-nowrap">
+              Following {followedBody} · Esc to release
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Rewind button — hold to scrub back in time (or hold R on keyboard) */}
+      <button
+        onPointerDown={() => { isRewindingRef.current = true; setIsRewinding(true) }}
+        onPointerUp={() => { isRewindingRef.current = false; setIsRewinding(false) }}
+        onPointerLeave={() => { isRewindingRef.current = false; setIsRewinding(false) }}
+        className={`absolute bottom-[180px] left-4 flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium border backdrop-blur-md transition-colors select-none z-10 ${
+          isRewinding
+            ? 'bg-purple-600/80 border-purple-400/50 text-white'
+            : 'bg-white/5 border-white/10 text-white/60 hover:text-white/85 hover:bg-white/10'
+        }`}
+      >
+        ⏪ Rewind
+      </button>
 
       {hoveredBody && (
         <BodyTooltip body={hoveredBody} x={tooltipPos.x} y={tooltipPos.y} />
