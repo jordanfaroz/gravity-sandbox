@@ -7,6 +7,7 @@ import { encodeBodies, decodeBodies } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import Toolbar from './toolbar'
 import BodyTooltip from './body-tooltip'
+import HelpModal from './help-modal'
 
 const VELOCITY_SCALE = 0.05
 const MIN_ZOOM = 0.04
@@ -49,6 +50,7 @@ export default function GravitySandbox() {
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 })
   const [bodyCount, setBodyCount] = useState(0)
   const [shareCopied, setShareCopied] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [cursor, setCursor] = useState<string>('crosshair')
 
@@ -876,12 +878,22 @@ export default function GravitySandbox() {
         onMouseLeave={handleMouseLeave}
       />
 
-      {/* Share confirmation badge */}
-      {shareCopied && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-green-600/90 text-white text-xs px-4 py-2 rounded-full backdrop-blur-sm border border-green-400/30 pointer-events-none">
-          URL copied to clipboard!
-        </div>
-      )}
+      {/* Top-right: share badge + help button (stacked, no overlap) */}
+      <div className="absolute top-4 right-4 flex flex-col items-end gap-2 z-10 pointer-events-none">
+        {shareCopied && (
+          <div className="bg-green-600/90 text-white text-xs px-4 py-2 rounded-full backdrop-blur-sm border border-green-400/30 whitespace-nowrap">
+            URL copied to clipboard!
+          </div>
+        )}
+        <button
+          onClick={() => setShowHelp(true)}
+          className="pointer-events-auto flex items-center gap-1.5 bg-white/5 backdrop-blur-md border border-white/10 rounded-full px-3.5 py-1.5 text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors text-xs font-medium select-none"
+        >
+          ? Help
+        </button>
+      </div>
+
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
 
       {/* Title */}
       <div className="absolute top-4 left-4 pointer-events-none select-none">
