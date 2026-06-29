@@ -8,6 +8,7 @@ import { PRESETS, PresetName } from '@/lib/presets'
 import Toolbar from './toolbar'
 import BodyTooltip from './body-tooltip'
 import HelpModal from './help-modal'
+import BodyEditor, { EditingBodyState } from './body-editor'
 
 const VELOCITY_SCALE = 0.05
 const MIN_ZOOM = 0.04
@@ -45,6 +46,8 @@ export default function GravitySandbox() {
   const followIdRef = useRef<string | null>(null)
   const followedTypeRef = useRef<BodyType | null>(null)
   const shakeRef = useRef({ x: 0, y: 0 })
+  const bodyDragMovedRef = useRef(false)
+  const editingIdRef = useRef<string | null>(null)
 
   // Mirror selectedType in a ref so touch handlers (inside useEffect) never go stale
   const selectedTypeRef = useRef<BodyType>('planet')
@@ -64,6 +67,7 @@ export default function GravitySandbox() {
   const [cursor, setCursor] = useState<string>('crosshair')
   const [isRewinding, setIsRewinding] = useState(false)
   const [followedBody, setFollowedBody] = useState<BodyType | null>(null)
+  const [editingBody, setEditingBody] = useState<EditingBodyState | null>(null)
 
   // Convert screen coords → world coords using current viewport
   const screenToWorld = useCallback((sx: number, sy: number) => {
@@ -523,10 +527,11 @@ export default function GravitySandbox() {
         return dx * dx + dy * dy < gr * gr
       }) ?? null
 
-    // Local state for pinch and long-press (lives inside the closure, stable for lifetime of effect)
+    // Local state for pinch, long-press, and tap detection (closure-local, stable for effect lifetime)
     let pinch: { dist: number; midX: number; midY: number } | null = null
     let longPressTimer: ReturnType<typeof setTimeout> | null = null
     let longPressOrigin: { clientX: number; clientY: number } | null = null
+    let touchBodyMoved = false
 
     const cancelLongPress = () => {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null }
@@ -561,6 +566,7 @@ export default function GravitySandbox() {
 
       if (hit) {
         bodyDragRef.current = { id: hit.id, offsetX: wx - hit.x, offsetY: wy - hit.y, wasRunning: isRunningRef.current }
+        touchBodyMoved = false
         isRunningRef.current = false
         longPressOrigin = { clientX: t.clientX, clientY: t.clientY }
         longPressTimer = setTimeout(() => {
@@ -614,6 +620,7 @@ export default function GravitySandbox() {
 
         const { wx, wy } = getWorld(t)
         if (bodyDragRef.current) {
+          touchBodyMoved = true
           const { id, offsetX, offsetY } = bodyDragRef.current
           bodiesRef.current = bodiesRef.current.map(b =>
             b.id === id ? { ...b, x: wx - offsetX, y: wy - offsetY, trail: [] } : b
@@ -631,8 +638,23 @@ export default function GravitySandbox() {
       if (e.touches.length > 0) return  // still touching
 
       if (bodyDragRef.current) {
-        isRunningRef.current = bodyDragRef.current.wasRunning
+        const { id, wasRunning } = bodyDragRef.current
+        isRunningRef.current = wasRunning
         bodyDragRef.current = null
+        if (!touchBodyMoved) {
+          // Tap on body — open the property editor
+          const body = bodiesRef.current.find(b => b.id === id)
+          if (body) {
+            const vp = viewportRef.current
+            editingIdRef.current = id
+            setEditingBody({
+              id, name: body.name, color: body.color, imageUrl: body.imageUrl,
+              type: body.type,
+              screenX: body.x * vp.scale + vp.x,
+              screenY: body.y * vp.scale + vp.y,
+            })
+          }
+        }
         return
       }
 
@@ -698,6 +720,8 @@ export default function GravitySandbox() {
         followIdRef.current = null
         followedTypeRef.current = null
         setFollowedBody(null)
+        editingIdRef.current = null
+        setEditingBody(null)
       }
     }
     const onKeyUp = (e: KeyboardEvent) => {
@@ -751,9 +775,13 @@ export default function GravitySandbox() {
         offsetY: wy - hit.y,
         wasRunning: isRunningRef.current,
       }
+      bodyDragMovedRef.current = false
       isRunningRef.current = false
       setCursor('grabbing')
     } else {
+      // Clicking empty space closes the editor and starts a new body drag
+      editingIdRef.current = null
+      setEditingBody(null)
       dragRef.current = { startX: wx, startY: wy, currentX: wx, currentY: wy }
     }
   }, [screenToWorld])
@@ -776,6 +804,7 @@ export default function GravitySandbox() {
 
     // Body drag: move the grabbed body in world space
     if (bodyDragRef.current) {
+      bodyDragMovedRef.current = true
       const { id, offsetX, offsetY } = bodyDragRef.current
       bodiesRef.current = bodiesRef.current.map(b =>
         b.id === id ? { ...b, x: wx - offsetX, y: wy - offsetY, trail: [] } : b
@@ -813,13 +842,30 @@ export default function GravitySandbox() {
       }
       if (e.button !== 0) return
 
-      // Release a body drag: resume simulation
+      // Release a body drag — or detect a click (no movement) to open the editor
       if (bodyDragRef.current) {
-        const { wasRunning } = bodyDragRef.current
+        const { id, wasRunning } = bodyDragRef.current
         bodyDragRef.current = null
         isRunningRef.current = wasRunning
         hoveredIdRef.current = null
         setCursor('crosshair')
+        if (!bodyDragMovedRef.current) {
+          // Pure click — open the property editor for this body
+          const body = bodiesRef.current.find(b => b.id === id)
+          if (body) {
+            const vp = viewportRef.current
+            editingIdRef.current = id
+            setEditingBody({
+              id,
+              name: body.name,
+              color: body.color,
+              imageUrl: body.imageUrl,
+              type: body.type,
+              screenX: body.x * vp.scale + vp.x,
+              screenY: body.y * vp.scale + vp.y,
+            })
+          }
+        }
         return
       }
 
@@ -911,6 +957,29 @@ export default function GravitySandbox() {
     }
   }, [screenToWorld])
 
+  // ── Body editor callbacks ────────────────────────────────────────────────────
+
+  const handleBodyUpdate = useCallback((updates: Partial<Pick<EditingBodyState, 'name' | 'color' | 'imageUrl'>>) => {
+    const id = editingIdRef.current
+    if (!id) return
+    bodiesRef.current = bodiesRef.current.map(b => b.id === id ? { ...b, ...updates } : b)
+    setEditingBody(prev => prev ? { ...prev, ...updates } : null)
+  }, [])
+
+  const handleEditorClose = useCallback(() => {
+    editingIdRef.current = null
+    setEditingBody(null)
+  }, [])
+
+  const handleBodyDelete = useCallback(() => {
+    const id = editingIdRef.current
+    if (!id) return
+    bodiesRef.current = bodiesRef.current.filter(b => b.id !== id)
+    setBodyCount(c => c - 1)
+    editingIdRef.current = null
+    setEditingBody(null)
+  }, [])
+
   // ── Toolbar actions ──────────────────────────────────────────────────────────
 
   const pause = useCallback(() => {
@@ -932,6 +1001,8 @@ export default function GravitySandbox() {
     followIdRef.current = null
     followedTypeRef.current = null
     setFollowedBody(null)
+    editingIdRef.current = null
+    setEditingBody(null)
     history.replaceState(null, '', window.location.pathname)
   }, [])
 
@@ -958,6 +1029,8 @@ export default function GravitySandbox() {
       followIdRef.current = null
       followedTypeRef.current = null
       setFollowedBody(null)
+      editingIdRef.current = null
+      setEditingBody(null)
     },
     []
   )
@@ -1019,6 +1092,15 @@ export default function GravitySandbox() {
       </div>
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+
+      {editingBody && (
+        <BodyEditor
+          body={editingBody}
+          onClose={handleEditorClose}
+          onUpdate={handleBodyUpdate}
+          onDelete={handleBodyDelete}
+        />
+      )}
 
       {/* Title */}
       <div className="absolute top-4 left-4 pointer-events-none select-none">

@@ -16,6 +16,8 @@ export interface Body {
   trail: { x: number; y: number }[]
   color: string
   pinned?: boolean
+  name?: string
+  imageUrl?: string
 }
 
 const SOFTENING_SQ = 50

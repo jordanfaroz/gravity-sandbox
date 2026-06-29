@@ -1,7 +1,8 @@
 import { Body, BodyType } from './physics'
 
-// Compact tuple: [type, x, y, vx, vy, mass, radius, color, pinned?]
-type MinBody = [string, number, number, number, number, number, number, string, number?]
+// Compact tuple: [type, x, y, vx, vy, mass, radius, color, pinned?, name?]
+// imageUrl is intentionally excluded — data URLs are too large for a URL hash
+type MinBody = [string, number, number, number, number, number, number, string, number?, string?]
 
 export function encodeBodies(bodies: Body[]): string {
   const min: MinBody[] = bodies.map(b => {
@@ -15,7 +16,8 @@ export function encodeBodies(bodies: Body[]): string {
       +b.radius.toFixed(1),
       b.color,
     ]
-    if (b.pinned) entry.push(1)
+    if (b.pinned || b.name) entry.push(b.pinned ? 1 : 0)
+    if (b.name) entry.push(b.name)
     return entry
   })
   return btoa(JSON.stringify(min))
@@ -35,6 +37,7 @@ export function decodeBodies(hash: string): Body[] {
       radius: m[6],
       color: m[7],
       pinned: m[8] === 1,
+      name: m[9],
       ax: 0,
       ay: 0,
       prevAx: 0,

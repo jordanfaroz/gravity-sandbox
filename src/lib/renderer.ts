@@ -1,5 +1,7 @@
 import { Body } from './physics'
 
+const imageCache = new Map<string, HTMLImageElement>()
+
 export interface DragState {
   startX: number
   startY: number
@@ -192,6 +194,39 @@ function drawBody(ctx: CanvasRenderingContext2D, body: Body, hovered: boolean): 
     case 'blackhole': drawBlackHole(ctx, body, hovered); break
     case 'asteroid': drawAsteroid(ctx, body, hovered); break
   }
+  if (body.imageUrl) drawBodyImage(ctx, body)
+  if (body.name) drawBodyName(ctx, body)
+}
+
+function drawBodyImage(ctx: CanvasRenderingContext2D, b: Body): void {
+  if (!b.imageUrl) return
+  let img = imageCache.get(b.imageUrl)
+  if (!img) {
+    img = new Image()
+    img.src = b.imageUrl
+    imageCache.set(b.imageUrl, img)
+  }
+  if (!img.complete || img.naturalWidth === 0) return
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2)
+  ctx.clip()
+  ctx.drawImage(img, b.x - b.radius, b.y - b.radius, b.radius * 2, b.radius * 2)
+  ctx.restore()
+}
+
+function drawBodyName(ctx: CanvasRenderingContext2D, b: Body): void {
+  if (!b.name) return
+  const fontSize = Math.max(9, Math.min(13, b.radius * 0.8))
+  ctx.save()
+  ctx.font = `${fontSize}px system-ui, sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'bottom'
+  ctx.shadowColor = 'rgba(0,0,0,0.9)'
+  ctx.shadowBlur = 5
+  ctx.fillStyle = 'rgba(255,255,255,0.88)'
+  ctx.fillText(b.name, b.x, b.y - b.radius - 5)
+  ctx.restore()
 }
 
 function drawStar(ctx: CanvasRenderingContext2D, b: Body, hovered: boolean): void {
