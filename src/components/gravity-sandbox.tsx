@@ -2,20 +2,31 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Body, BodyType, defaultColor, defaultMass, defaultRadius, predictPath, step } from '@/lib/physics'
-import { draw, DragState, Viewport, Particle, AbsorptionAnim, SupernovaAnim } from '@/lib/renderer'
+import { draw, DragState, Particle, AbsorptionAnim, SupernovaAnim } from '@/lib/renderer'
+import {
+  Viewport, MIN_ZOOM, MAX_ZOOM, canvasCssSize, eventToCanvas, findBodyAt, frameToFit, screenToWorld,
+  worldToScreen, zoomAt,
+} from '@/lib/camera'
+import {
+  GESTURE, Gesture, PointerState, CancelReason, distance,
+  TAP_MAX_PX, LONG_PRESS_MS, LONG_PRESS_MAX_PX, MAX_SPAWN_SPEED, InteractionMode,
+} from '@/lib/gestures'
 import { encodeBodies, decodeBodies } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
-import Toolbar from './toolbar'
+import { newId } from '@/lib/utils'
+import { useNativeShell } from '@/lib/use-native-shell'
+import Toolbar, { SheetName, SettingsSheetBody, BODY_TYPES, PRESET_LIST } from './toolbar'
+import Sheet from './sheet'
 import BodyTooltip from './body-tooltip'
 import HelpModal from './help-modal'
 import BodyEditor, { EditingBodyState } from './body-editor'
 
 const VELOCITY_SCALE = 0.05
-const MIN_ZOOM = 0.04
-const MAX_ZOOM = 25
 const MAX_BODIES = 45
 const MAX_PARTICLES = 300
 const MAX_HISTORY = 300
+// Rotation on Android fires a burst of resize events; coalesce them.
+const RESIZE_DEBOUNCE_MS = 150
 const PREVIEW_COLORS: Record<BodyType, string> = {
   star: '#FFD700', planet: '#4fa3e0', blackhole: '#9944ff', asteroid: '#9a9a9a',
 }
@@ -32,7 +43,9 @@ export default function GravitySandbox() {
   const lastTimeRef = useRef<number>(0)
   const dragRef = useRef<DragState | null>(null)
   const hoveredIdRef = useRef<string | null>(null)
-  const viewportRef = useRef<Viewport>({ x: 0, y: 0, scale: 1 })
+  // dpr stays 1 for now; Phase 5 caps it at Math.min(devicePixelRatio, 2). It lives
+  // in the viewport so the camera helpers own the CSS-px ↔ device-px boundary.
+  const viewportRef = useRef<Viewport>({ x: 0, y: 0, scale: 1, dpr: 1 })
   // Body being dragged (moves an existing body, sim pauses)
   const bodyDragRef = useRef<{ id: string; offsetX: number; offsetY: number; wasRunning: boolean } | null>(null)
   // Middle-mouse pan state
@@ -48,9 +61,29 @@ export default function GravitySandbox() {
   const shakeRef = useRef({ x: 0, y: 0 })
   const bodyDragMovedRef = useRef(false)
   const editingIdRef = useRef<string | null>(null)
+  // Set by the rAF effect so lifecycle events (visibilitychange, Capacitor
+  // pause/resume) can halt and restart the loop without double-starting it.
+  const loopControlRef = useRef<{ start: () => void; stop: () => void } | null>(null)
 
-  // Mirror selectedType in a ref so touch handlers (inside useEffect) never go stale
+  // Mirror selectedType in a ref so pointer handlers never read a stale value
   const selectedTypeRef = useRef<BodyType>('planet')
+
+  // Single-pointer default. Two-finger gestures bypass it entirely, and middle-drag
+  // still pans on desktop. The visible toggle for this arrives in Phase 3b-3.
+  const interactionModeRef = useRef<InteractionMode>('spawn')
+
+  // Gesture machine state. Declared here, with the other refs, because the rAF loop
+  // reads gestureRef and closures created before a ref is declared are treated as
+  // capturing a frozen value.
+  const gestureRef = useRef<Gesture>(GESTURE.IDLE)
+  const pointersRef = useRef<Map<number, PointerState>>(new Map())
+  const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null)
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Set when a gesture is discarded. Both reasons discard; kept apart for debugging.
+  const cancelReasonRef = useRef<CancelReason | null>(null)
+  // Input type of the most recent pointerdown, so dblclick (a MouseEvent, which
+  // carries no pointerType) can tell a real double-click from a synthesised one.
+  const lastPointerTypeRef = useRef<string>('mouse')
 
   // React state for UI only
   const [selectedType, setSelectedType] = useState<BodyType>('planet')
@@ -68,24 +101,82 @@ export default function GravitySandbox() {
   const [isRewinding, setIsRewinding] = useState(false)
   const [followedBody, setFollowedBody] = useState<BodyType | null>(null)
   const [editingBody, setEditingBody] = useState<EditingBodyState | null>(null)
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>('spawn')
+  // Which body the camera is following, as state so the editor can show it.
+  const [followedId, setFollowedId] = useState<string | null>(null)
+  const [openSheet, setOpenSheet] = useState<SheetName | null>(null)
+  useEffect(() => { interactionModeRef.current = interactionMode }, [interactionMode])
 
-  // Convert screen coords → world coords using current viewport
-  const screenToWorld = useCallback((sx: number, sy: number) => {
-    const { x, y, scale } = viewportRef.current
-    return { wx: (sx - x) / scale, wy: (sy - y) / scale }
+  // Canvas-local CSS coords for a mouse event, then the world point under it.
+  const eventWorld = useCallback((e: { clientX: number; clientY: number }) => {
+    const canvas = canvasRef.current!
+    const { x, y } = eventToCanvas(e, canvas)
+    return screenToWorld(x, y, viewportRef.current)
   }, [])
 
-  // Zoom around a screen-space pivot point
-  const applyZoom = useCallback((factor: number, cx: number, cy: number) => {
+  /**
+   * Resize the backing store and keep the same world point under the centre.
+   *
+   * One of only two places that touch device pixels (the other is setTransform in
+   * draw). Shared by the resize listener and by mount, which needs the canvas
+   * sized before it can frame the camera to a hash-loaded scene.
+   *
+   * ── COORDINATE-SPACE BOUNDARY. READ BEFORE CHANGING. ──────────────────────
+   * The canvas is measured from its own LAYOUT box (getBoundingClientRect), not
+   * from window.visualViewport. Pointer events' clientX/clientY and
+   * document.elementFromPoint — which the gesture machine and the spawn dead zone
+   * both depend on — are expressed in layout-viewport coordinates. visualViewport
+   * is a different space: it shifts and shrinks when the on-screen keyboard opens
+   * or the page is pinch-zoomed. Sizing the canvas from visualViewport while
+   * hit-testing in layout coordinates makes the two diverge, and every tap lands
+   * at the wrong world point with no visible cause.
+   *
+   * visualViewport is therefore used ONLY as an extra resize *signal* (Android
+   * fires it in cases window resize misses); the dimensions always come from the
+   * layout box, which is the same source of truth eventToCanvas uses.
+   */
+  const sizeCanvas = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
     const vp = viewportRef.current
-    const newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, vp.scale * factor))
-    const ratio = newScale / vp.scale
-    viewportRef.current = {
-      scale: newScale,
-      x: cx * (1 - ratio) + vp.x * ratio,
-      y: cy * (1 - ratio) + vp.y * ratio,
+    const { dpr } = vp
+
+    const rect = canvas.getBoundingClientRect()
+    const cssW = rect.width || window.innerWidth
+    const cssH = rect.height || window.innerHeight
+
+    // Previous CSS size, recovered from the backing store: the layout box has
+    // already updated by the time this runs, so the old size is only still
+    // available here.
+    const prevW = canvas.width / dpr
+    const prevH = canvas.height / dpr
+
+    const nextW = Math.round(cssW * dpr)
+    const nextH = Math.round(cssH * dpr)
+    if (canvas.width === nextW && canvas.height === nextH) return
+
+    // Hold the world-space centre across the resize, so rotating the device keeps
+    // the same part of the simulation in view instead of sliding the camera.
+    const hadSize = prevW > 0 && prevH > 0
+    const centre = hadSize ? screenToWorld(prevW / 2, prevH / 2, vp) : null
+
+    canvas.width = nextW
+    canvas.height = nextH
+
+    if (centre) {
+      viewportRef.current = {
+        ...vp,
+        x: cssW / 2 - centre.x * vp.scale,
+        y: cssH / 2 - centre.y * vp.scale,
+      }
     }
-    setZoom(newScale)
+  }, [])
+
+  // Zoom about a canvas-local CSS pivot, keeping that world point anchored.
+  const applyZoom = useCallback((factor: number, cx: number, cy: number) => {
+    const next = zoomAt(viewportRef.current, factor, cx, cy)
+    viewportRef.current = next
+    setZoom(next.scale)
   }, [])
 
   // Main rAF loop: physics + render
@@ -93,12 +184,25 @@ export default function GravitySandbox() {
     const canvas = canvasRef.current
     if (!canvas) return
 
+    // Must precede framing: the resize effect is declared later and so runs later.
+    sizeCanvas()
+
     const hash = window.location.hash.slice(1)
     if (hash) {
       const decoded = decodeBodies(hash)
       if (decoded.length > 0) {
         bodiesRef.current = decoded
         setBodyCount(decoded.length)
+        // Shared links carry absolute world coordinates but no camera, so a link
+        // authored on a desktop used to open with its bodies off-screen on a phone.
+        // Framing on load makes an existing link render correctly on any device
+        // without changing the encoding.
+        viewportRef.current = frameToFit(
+          decoded,
+          canvasCssSize(canvas, viewportRef.current),
+          viewportRef.current
+        )
+        setZoom(viewportRef.current.scale)
       }
     }
 
@@ -212,7 +316,7 @@ export default function GravitySandbox() {
                 const spawnDist = R * 2.5 + Math.random() * R * 3
                 const mass = 2 + Math.random() * 6
                 newDebris.push({
-                  id: crypto.randomUUID(), type: 'asteroid',
+                  id: newId(), type: 'asteroid',
                   x: ev.x + Math.cos(a) * spawnDist, y: ev.y + Math.sin(a) * spawnDist,
                   vx: ev.vx + Math.cos(a) * ejectSpeed, vy: ev.vy + Math.sin(a) * ejectSpeed,
                   ax: 0, ay: 0, prevAx: 0, prevAy: 0,
@@ -336,7 +440,7 @@ export default function GravitySandbox() {
             const spawnDist = Math.max(ev.radius + 18, R * (2.0 + Math.random() * 2.0))
             const mass = 2 + Math.random() * 5
             newDebris.push({
-              id: crypto.randomUUID(),
+              id: newId(),
               type: 'asteroid',
               x: ev.x + Math.cos(angle) * spawnDist,
               y: ev.y + Math.sin(angle) * spawnDist,
@@ -353,6 +457,17 @@ export default function GravitySandbox() {
           bodiesRef.current = [...bodiesRef.current, ...newDebris]
           setBodyCount(c => c + newDebris.length)
         }
+      }
+
+      // Re-project the spawn endpoint from the pointer's screen position every frame.
+      // The anchor is world-space and fixed, but the endpoint must track the cursor
+      // even when the camera moves without the pointer moving (wheel zoom mid-drag),
+      // otherwise the arrow detaches and the launch uses a stale delta.
+      if (dragRef.current) {
+        const d = dragRef.current
+        const w = screenToWorld(d.lastScreenX, d.lastScreenY, viewportRef.current)
+        d.currentX = w.x
+        d.currentY = w.y
       }
 
       // Predicted orbit preview — fading dots showing where a new body will travel
@@ -417,29 +532,37 @@ export default function GravitySandbox() {
         }))
         .filter(p => p.life > 0)
 
-      // Follow camera — lock viewport to center on the followed body each frame
-      if (followIdRef.current) {
+      // Follow camera — lock viewport to center on the followed body each frame.
+      // Suspended during a spawn drag: aiming at a target while the world slides
+      // under the anchor makes the launch impossible to control.
+      if (followIdRef.current && gestureRef.current !== GESTURE.SPAWNING) {
         const fb = bodiesRef.current.find(b => b.id === followIdRef.current)
         if (fb) {
           if (fb.type !== followedTypeRef.current) {
             followedTypeRef.current = fb.type
             setFollowedBody(fb.type)
           }
+          const { width, height } = canvasCssSize(canvas!, viewportRef.current)
           viewportRef.current = {
             ...viewportRef.current,
-            x: canvas!.width / 2 - fb.x * viewportRef.current.scale,
-            y: canvas!.height / 2 - fb.y * viewportRef.current.scale,
+            x: width / 2 - fb.x * viewportRef.current.scale,
+            y: height / 2 - fb.y * viewportRef.current.scale,
           }
         } else {
           followIdRef.current = null
           followedTypeRef.current = null
           setFollowedBody(null)
+          setFollowedId(null)
         }
       }
 
       const ctx = canvas!.getContext('2d')
       if (ctx) {
-        // Apply screen shake as a per-frame viewport offset (doesn't mutate viewportRef)
+        // Screen shake is RENDER-ONLY. It is applied to a throwaway copy of the
+        // viewport and never written back to viewportRef, so screenToWorld /
+        // worldToScreen / findBodyAt all keep operating in unshaken world space and
+        // hit-testing stays aligned with where the user thinks bodies are. Do not
+        // fold this offset into the camera helpers.
         const vp = viewportRef.current
         const shakeViewport = {
           ...vp,
@@ -452,7 +575,27 @@ export default function GravitySandbox() {
       rafRef.current = requestAnimationFrame(tick)
     }
 
-    rafRef.current = requestAnimationFrame(tick)
+    // Guarded so the loop can never be started twice. Android can deliver both
+    // visibilitychange and the Capacitor pause/resume pair for the same transition;
+    // without the guard that would leave two rAF loops running at double speed.
+    let loopRunning = false
+
+    const startLoop = () => {
+      if (loopRunning) return
+      loopRunning = true
+      // Reset the frame timer rather than integrating the backgrounded gap.
+      lastTimeRef.current = performance.now()
+      rafRef.current = requestAnimationFrame(tick)
+    }
+
+    const stopLoop = () => {
+      if (!loopRunning) return
+      loopRunning = false
+      cancelAnimationFrame(rafRef.current)
+    }
+
+    startLoop()
+    loopControlRef.current = { start: startLoop, stop: stopLoop }
 
     const urlTimer = setInterval(() => {
       if (bodiesRef.current.length > 0) {
@@ -461,34 +604,46 @@ export default function GravitySandbox() {
     }, 2000)
 
     const onVisibility = () => {
-      if (document.hidden) {
-        cancelAnimationFrame(rafRef.current)
-      } else {
-        lastTimeRef.current = performance.now()
-        rafRef.current = requestAnimationFrame(tick)
-      }
+      if (document.hidden) stopLoop()
+      else startLoop()
     }
     document.addEventListener('visibilitychange', onVisibility)
 
     return () => {
-      cancelAnimationFrame(rafRef.current)
+      stopLoop()
+      loopControlRef.current = null
       clearInterval(urlTimer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [])
+  }, [sizeCanvas])
 
   // Resize canvas to fill the window
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const resize = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
+    sizeCanvas()
+
+    // Debounced: Android fires a burst of resizes through a rotation, and
+    // reallocating the backing store on each one is both slow and visibly janky.
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const debounced = () => {
+      if (timer !== null) clearTimeout(timer)
+      timer = setTimeout(() => { timer = null; sizeCanvas() }, RESIZE_DEBOUNCE_MS)
     }
-    resize()
-    window.addEventListener('resize', resize)
-    return () => window.removeEventListener('resize', resize)
-  }, [])
+
+    window.addEventListener('resize', debounced)
+    window.addEventListener('orientationchange', debounced)
+    // Signal only — see the coordinate-space note on sizeCanvas. Android reports
+    // some transitions here that never reach the window resize event.
+    window.visualViewport?.addEventListener('resize', debounced)
+
+    return () => {
+      if (timer !== null) clearTimeout(timer)
+      window.removeEventListener('resize', debounced)
+      window.removeEventListener('orientationchange', debounced)
+      window.visualViewport?.removeEventListener('resize', debounced)
+    }
+  }, [sizeCanvas])
 
   // Non-passive wheel listener so we can prevent page zoom
   useEffect(() => {
@@ -496,9 +651,7 @@ export default function GravitySandbox() {
     if (!canvas) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      const rect = canvas.getBoundingClientRect()
-      const cx = e.clientX - rect.left
-      const cy = e.clientY - rect.top
+      const { x: cx, y: cy } = eventToCanvas(e, canvas)
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
       applyZoom(factor, cx, cy)
     }
@@ -506,229 +659,26 @@ export default function GravitySandbox() {
     return () => canvas.removeEventListener('wheel', onWheel)
   }, [applyZoom])
 
-  // Touch handlers — non-passive so we can preventDefault and block browser scroll/zoom
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
 
-    const getWorld = (touch: Touch) => {
-      const rect = canvas.getBoundingClientRect()
-      const { x, y, scale } = viewportRef.current
-      return {
-        wx: (touch.clientX - rect.left - x) / scale,
-        wy: (touch.clientY - rect.top  - y) / scale,
-      }
-    }
+  // Global pointerup safety net — cleans up drag/pan if the pointer is released
+  // outside the canvas. Pointer capture makes this mostly redundant now, but it is
+  // kept as a backstop for the case where capture is lost (the browser can revoke
+  // it), and because removing it would be a behaviour change in its own right.
+  // (defined below, after the gesture callbacks it depends on)
 
-    const hitTest = (wx: number, wy: number) =>
-      bodiesRef.current.find(b => {
-        const dx = b.x - wx, dy = b.y - wy
-        const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
-        return dx * dx + dy * dy < gr * gr
-      }) ?? null
+  // Rewind is driven by both the hold-to-rewind button and the R key; one impl.
+  const startRewind = useCallback(() => { isRewindingRef.current = true; setIsRewinding(true) }, [])
+  const stopRewind = useCallback(() => { isRewindingRef.current = false; setIsRewinding(false) }, [])
 
-    // Local state for pinch, long-press, and tap detection (closure-local, stable for effect lifetime)
-    let pinch: { dist: number; midX: number; midY: number } | null = null
-    let longPressTimer: ReturnType<typeof setTimeout> | null = null
-    let longPressOrigin: { clientX: number; clientY: number } | null = null
-    let touchBodyMoved = false
-
-    const cancelLongPress = () => {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null }
-      longPressOrigin = null
-    }
-
-    const onStart = (e: TouchEvent) => {
-      e.preventDefault()
-
-      if (e.touches.length >= 2) {
-        // Two fingers: start pinch — cancel any ongoing single-touch interaction
-        cancelLongPress()
-        dragRef.current = null
-        if (bodyDragRef.current) {
-          isRunningRef.current = bodyDragRef.current.wasRunning
-          bodyDragRef.current = null
-        }
-        const t1 = e.touches[0], t2 = e.touches[1]
-        const dx = t2.clientX - t1.clientX, dy = t2.clientY - t1.clientY
-        pinch = {
-          dist: Math.sqrt(dx * dx + dy * dy),
-          midX: (t1.clientX + t2.clientX) / 2,
-          midY: (t1.clientY + t2.clientY) / 2,
-        }
-        return
-      }
-
-      pinch = null
-      const t = e.touches[0]
-      const { wx, wy } = getWorld(t)
-      const hit = hitTest(wx, wy)
-
-      if (hit) {
-        bodyDragRef.current = { id: hit.id, offsetX: wx - hit.x, offsetY: wy - hit.y, wasRunning: isRunningRef.current }
-        touchBodyMoved = false
-        isRunningRef.current = false
-        longPressOrigin = { clientX: t.clientX, clientY: t.clientY }
-        longPressTimer = setTimeout(() => {
-          // Long-press: delete the body
-          bodiesRef.current = bodiesRef.current.filter(b => b.id !== hit.id)
-          setBodyCount(c => c - 1)
-          if (bodyDragRef.current?.id === hit.id) {
-            isRunningRef.current = bodyDragRef.current.wasRunning
-            bodyDragRef.current = null
-          }
-          if ('vibrate' in navigator) (navigator as Navigator & { vibrate: (n: number) => void }).vibrate(25)
-          longPressTimer = null
-          longPressOrigin = null
-        }, 580)
-      } else {
-        dragRef.current = { startX: wx, startY: wy, currentX: wx, currentY: wy }
-      }
-    }
-
-    const onMove = (e: TouchEvent) => {
-      e.preventDefault()
-
-      if (e.touches.length >= 2 && pinch) {
-        const t1 = e.touches[0], t2 = e.touches[1]
-        const dx = t2.clientX - t1.clientX, dy = t2.clientY - t1.clientY
-        const newDist = Math.sqrt(dx * dx + dy * dy)
-        const newMidX = (t1.clientX + t2.clientX) / 2
-        const newMidY = (t1.clientY + t2.clientY) / 2
-        const rect = canvas.getBoundingClientRect()
-        // Zoom centered on pinch midpoint
-        applyZoom(newDist / pinch.dist, newMidX - rect.left, newMidY - rect.top)
-        // Pan by midpoint translation
-        viewportRef.current = {
-          ...viewportRef.current,
-          x: viewportRef.current.x + (newMidX - pinch.midX),
-          y: viewportRef.current.y + (newMidY - pinch.midY),
-        }
-        pinch = { dist: newDist, midX: newMidX, midY: newMidY }
-        return
-      }
-
-      if (e.touches.length === 1) {
-        const t = e.touches[0]
-
-        // Cancel long-press if finger drifted more than 12 screen px
-        if (longPressOrigin) {
-          const mdx = t.clientX - longPressOrigin.clientX
-          const mdy = t.clientY - longPressOrigin.clientY
-          if (mdx * mdx + mdy * mdy > 144) cancelLongPress()
-        }
-
-        const { wx, wy } = getWorld(t)
-        if (bodyDragRef.current) {
-          touchBodyMoved = true
-          const { id, offsetX, offsetY } = bodyDragRef.current
-          bodiesRef.current = bodiesRef.current.map(b =>
-            b.id === id ? { ...b, x: wx - offsetX, y: wy - offsetY, trail: [] } : b
-          )
-        } else if (dragRef.current) {
-          dragRef.current = { ...dragRef.current, currentX: wx, currentY: wy }
-        }
-      }
-    }
-
-    const onEnd = (e: TouchEvent) => {
-      e.preventDefault()
-      cancelLongPress()
-      if (e.touches.length < 2) pinch = null
-      if (e.touches.length > 0) return  // still touching
-
-      if (bodyDragRef.current) {
-        const { id, wasRunning } = bodyDragRef.current
-        isRunningRef.current = wasRunning
-        bodyDragRef.current = null
-        if (!touchBodyMoved) {
-          // Tap on body — open the property editor
-          const body = bodiesRef.current.find(b => b.id === id)
-          if (body) {
-            const vp = viewportRef.current
-            editingIdRef.current = id
-            setEditingBody({
-              id, name: body.name, color: body.color, imageUrl: body.imageUrl,
-              type: body.type,
-              screenX: body.x * vp.scale + vp.x,
-              screenY: body.y * vp.scale + vp.y,
-            })
-          }
-        }
-        return
-      }
-
-      const drag = dragRef.current
-      dragRef.current = null
-      if (!drag) return
-
-      const ct = e.changedTouches[0]
-      const rect = canvas.getBoundingClientRect()
-      if (ct.clientY - rect.top > rect.height - 160) return  // toolbar area
-
-      const vx = (drag.currentX - drag.startX) * VELOCITY_SCALE
-      const vy = (drag.currentY - drag.startY) * VELOCITY_SCALE
-      const mass = defaultMass(selectedTypeRef.current)
-      const body: Body = {
-        id: crypto.randomUUID(), type: selectedTypeRef.current,
-        x: drag.startX, y: drag.startY, vx, vy,
-        ax: 0, ay: 0, prevAx: 0, prevAy: 0,
-        mass, radius: defaultRadius(mass, selectedTypeRef.current),
-        trail: [], color: defaultColor(selectedTypeRef.current), pinned: false,
-      }
-      bodiesRef.current = [...bodiesRef.current, body]
-      setBodyCount(c => c + 1)
-    }
-
-    canvas.addEventListener('touchstart',  onStart, { passive: false })
-    canvas.addEventListener('touchmove',   onMove,  { passive: false })
-    canvas.addEventListener('touchend',    onEnd,   { passive: false })
-    canvas.addEventListener('touchcancel', onEnd,   { passive: false })
-    return () => {
-      canvas.removeEventListener('touchstart',  onStart)
-      canvas.removeEventListener('touchmove',   onMove)
-      canvas.removeEventListener('touchend',    onEnd)
-      canvas.removeEventListener('touchcancel', onEnd)
-    }
-  }, [applyZoom])
-
-  // Global mouseup safety net — cleans up drag/pan if mouse released outside canvas
-  useEffect(() => {
-    const onGlobalUp = (e: MouseEvent) => {
-      if (e.button === 1) {
-        panRef.current = null
-      } else if (e.button === 0 && bodyDragRef.current) {
-        isRunningRef.current = bodyDragRef.current.wasRunning
-        bodyDragRef.current = null
-        hoveredIdRef.current = null
-        setCursor('crosshair')
-      }
-    }
-    document.addEventListener('mouseup', onGlobalUp)
-    return () => document.removeEventListener('mouseup', onGlobalUp)
-  }, [])
-
-  // Keyboard: hold R to rewind, Escape to stop following
+  // Keyboard: hold R to rewind. Escape is handled separately, below, because it
+  // shares the hardware back button's precedence chain.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return
-      if (e.key === 'r' || e.key === 'R') {
-        isRewindingRef.current = true
-        setIsRewinding(true)
-      }
-      if (e.key === 'Escape') {
-        followIdRef.current = null
-        followedTypeRef.current = null
-        setFollowedBody(null)
-        editingIdRef.current = null
-        setEditingBody(null)
-      }
+      if (e.key === 'r' || e.key === 'R') startRewind()
     }
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'r' || e.key === 'R') {
-        isRewindingRef.current = false
-        setIsRewinding(false)
-      }
+      if (e.key === 'r' || e.key === 'R') stopRewind()
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
@@ -736,185 +686,426 @@ export default function GravitySandbox() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
+  }, [startRewind, stopRewind])
+
+  // ── Pointer input: one state machine for mouse, pen and touch ───────────────
+  //
+  // See src/lib/gestures.ts for the enum and the full transition table. Every state
+  // change goes through setGesture so the machine stays inspectable; nothing here
+  // infers a gesture from a combination of booleans.
+
+  const clearLongPress = useCallback(() => {
+    if (longPressRef.current !== null) {
+      clearTimeout(longPressRef.current)
+      longPressRef.current = null
+    }
   }, [])
 
-  // ── Mouse handlers ──────────────────────────────────────────────────────────
+  /** Release a grabbed body, restoring the run state captured when the grab began. */
+  const releaseGrab = useCallback(() => {
+    const grab = bodyDragRef.current
+    if (!grab) return
+    // Only resume a sim that was running before the grab — never resume one the
+    // user had deliberately paused.
+    isRunningRef.current = grab.wasRunning
+    bodyDragRef.current = null
+  }, [])
 
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Middle button: start pan (clears follow mode)
-    if (e.button === 1) {
-      e.preventDefault()
-      followIdRef.current = null
-      followedTypeRef.current = null
-      setFollowedBody(null)
-      panRef.current = {
-        startX: e.clientX,
-        startY: e.clientY,
-        vpX: viewportRef.current.x,
-        vpY: viewportRef.current.y,
-      }
-      return
+  /**
+   * Abandon whatever single-pointer gesture is in progress without committing it.
+   * A half-drawn spawn arrow disappears; a grabbed body stays exactly where it is
+   * now, because the sim is paused during a grab and its current position is the
+   * user's own deliberate placement.
+   */
+  const discardActiveGesture = useCallback((reason: CancelReason) => {
+    cancelReasonRef.current = reason
+    clearLongPress()
+    dragRef.current = null
+    predictedRef.current = null
+    panRef.current = null
+    releaseGrab()
+  }, [clearLongPress, releaseGrab])
+
+  /** Reset to IDLE. Called whenever the pointer map empties. */
+  const resetToIdle = useCallback(() => {
+    clearLongPress()
+    pinchRef.current = null
+    dragRef.current = null
+    predictedRef.current = null
+    panRef.current = null
+    releaseGrab()
+    gestureRef.current = GESTURE.IDLE
+  }, [clearLongPress, releaseGrab])
+
+  const beginPinch = useCallback(() => {
+    const [a, b] = [...pointersRef.current.values()]
+    if (!a || !b) return
+    pinchRef.current = {
+      dist: distance(a.curX, a.curY, b.curX, b.curY),
+      midX: (a.curX + b.curX) / 2,
+      midY: (a.curY + b.curY) / 2,
     }
-    if (e.button !== 0) return
+    gestureRef.current = GESTURE.PINCHING
+  }, [])
 
-    const rect = canvasRef.current!.getBoundingClientRect()
-    const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
+  const startSpawn = useCallback((p: PointerState) => {
+    const w = screenToWorld(p.startX, p.startY, viewportRef.current)
+    editingIdRef.current = null
+    setEditingBody(null)
+    dragRef.current = {
+      startX: w.x, startY: w.y,
+      currentX: w.x, currentY: w.y,
+      // Canvas CSS position of the pointer, re-projected every frame so the arrow
+      // tracks the cursor even when the camera moves under it (wheel zoom).
+      lastScreenX: p.curX, lastScreenY: p.curY,
+    }
+    gestureRef.current = GESTURE.SPAWNING
+  }, [])
 
-    // Prefer grabbing an existing body over placing a new one
-    const hit = bodiesRef.current.find(b => {
-      const dx = b.x - wx
-      const dy = b.y - wy
-      const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
-      return dx * dx + dy * dy < gr * gr
+  const startPan = useCallback((p: PointerState) => {
+    followIdRef.current = null
+    followedTypeRef.current = null
+    setFollowedBody(null)
+    setFollowedId(null)
+    panRef.current = {
+      startX: p.curX, startY: p.curY,
+      vpX: viewportRef.current.x, vpY: viewportRef.current.y,
+    }
+    gestureRef.current = GESTURE.PANNING
+  }, [])
+
+  const startGrab = useCallback((body: Body, p: PointerState) => {
+    const w = screenToWorld(p.curX, p.curY, viewportRef.current)
+    bodyDragRef.current = {
+      id: body.id,
+      offsetX: w.x - body.x,
+      offsetY: w.y - body.y,
+      wasRunning: isRunningRef.current,
+    }
+    bodyDragMovedRef.current = false
+    isRunningRef.current = false
+    setCursor('grabbing')
+    gestureRef.current = GESTURE.GRABBING
+  }, [])
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Best-effort: setPointerCapture throws when no active pointer has that id, and
+    // letting it propagate would abort gesture setup and strand the machine.
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* no active pointer */ }
+    lastPointerTypeRef.current = e.pointerType
+    const { x, y } = eventToCanvas(e, e.currentTarget)
+    pointersRef.current.set(e.pointerId, {
+      id: e.pointerId, startX: x, startY: y, curX: x, curY: y, startTime: performance.now(),
     })
 
-    if (hit) {
-      bodyDragRef.current = {
-        id: hit.id,
-        offsetX: wx - hit.x,
-        offsetY: wy - hit.y,
-        wasRunning: isRunningRef.current,
-      }
-      bodyDragMovedRef.current = false
-      isRunningRef.current = false
-      setCursor('grabbing')
-    } else {
-      // Clicking empty space closes the editor and starts a new body drag
-      editingIdRef.current = null
-      setEditingBody(null)
-      dragRef.current = { startX: wx, startY: wy, currentX: wx, currentY: wy }
+    // Two pointers always mean pinch, whatever was in progress and whatever mode
+    // the app is in. The interrupted gesture is discarded, never committed.
+    if (pointersRef.current.size >= 2) {
+      discardActiveGesture('superseded')
+      beginPinch()
+      return
     }
-  }, [screenToWorld])
 
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    // Pan (middle mouse held)
-    if (panRef.current) {
-      const dx = e.clientX - panRef.current.startX
-      const dy = e.clientY - panRef.current.startY
-      viewportRef.current = {
-        ...viewportRef.current,
-        x: panRef.current.vpX + dx,
-        y: panRef.current.vpY + dy,
+    // A third-or-later pointer landing while LOCKED must not restart anything.
+    if (gestureRef.current === GESTURE.LOCKED) return
+
+    const p = pointersRef.current.get(e.pointerId)!
+    cancelReasonRef.current = null
+
+    // Middle button pans regardless of mode — unchanged desktop behaviour.
+    if (e.pointerType !== 'touch' && e.button === 1) {
+      e.preventDefault()
+      startPan(p)
+      return
+    }
+    if (e.pointerType !== 'touch' && e.button !== 0) return
+
+    const w = screenToWorld(x, y, viewportRef.current)
+    const hit = findBodyAt(bodiesRef.current, w.x, w.y, viewportRef.current)
+
+    if (e.pointerType === 'touch') {
+      // Touch cannot hover, so a single finger down is ambiguous between grabbing a
+      // body and starting a pan/spawn. Stay undecided and let the thresholds decide.
+      gestureRef.current = GESTURE.PENDING
+      if (hit) {
+        longPressRef.current = setTimeout(() => {
+          longPressRef.current = null
+          const still = pointersRef.current.get(e.pointerId)
+          if (!still || gestureRef.current !== GESTURE.PENDING) return
+          if (distance(still.startX, still.startY, still.curX, still.curY) > LONG_PRESS_MAX_PX) return
+          const body = bodiesRef.current.find(b => b.id === hit.id)
+          if (!body) return
+          if ('vibrate' in navigator) {
+            (navigator as Navigator & { vibrate: (n: number) => void }).vibrate(15)
+          }
+          startGrab(body, still)
+        }, LONG_PRESS_MS)
       }
       return
     }
 
-    const rect = canvasRef.current!.getBoundingClientRect()
-    const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
+    // Mouse and pen resolve immediately: pressing on a body has always grabbed it,
+    // and there is a hover cursor to signal it. Making desktop wait 400 ms would be
+    // a regression, so PENDING is a touch-only state.
+    if (hit) startGrab(hit, p)
+    else if (interactionModeRef.current === 'pan') startPan(p)
+    else startSpawn(p)
+  }, [beginPinch, discardActiveGesture, startGrab, startPan, startSpawn])
 
-    // Body drag: move the grabbed body in world space
-    if (bodyDragRef.current) {
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    const p = pointersRef.current.get(e.pointerId)
+    const { x, y } = eventToCanvas(e, e.currentTarget)
+    if (p) { p.curX = x; p.curY = y }
+
+    const state = gestureRef.current
+
+    if (state === GESTURE.PINCHING) {
+      const [a, b] = [...pointersRef.current.values()]
+      const pinch = pinchRef.current
+      if (!a || !b || !pinch) return
+      const dist = distance(a.curX, a.curY, b.curX, b.curY)
+      const midX = (a.curX + b.curX) / 2
+      const midY = (a.curY + b.curY) / 2
+      if (pinch.dist <= 0) return
+
+      // Zoom and two-finger pan solved together, exactly: take the world point under
+      // the PREVIOUS midpoint and place it under the new one at the new scale.
+      // Scaling about the new midpoint and then adding the midpoint delta separately
+      // leaves an error of (mid1 - mid0) * (1 - factor), which shows up as the anchor
+      // creeping out from under the fingers over a long pinch.
+      const vp = viewportRef.current
+      const anchor = screenToWorld(pinch.midX, pinch.midY, vp)
+      const scale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, vp.scale * (dist / pinch.dist)))
+      viewportRef.current = {
+        ...vp,
+        scale,
+        x: midX - anchor.x * scale,
+        y: midY - anchor.y * scale,
+      }
+      setZoom(scale)
+      pinchRef.current = { dist, midX, midY }
+      return
+    }
+
+    // LOCKED deliberately ignores movement: a leftover finger after a pinch must not
+    // start panning or spawning from a stale anchor.
+    if (state === GESTURE.LOCKED) return
+
+    if (state === GESTURE.PENDING && p) {
+      if (distance(p.startX, p.startY, p.curX, p.curY) > TAP_MAX_PX) {
+        clearLongPress()
+        if (interactionModeRef.current === 'pan') startPan(p)
+        else startSpawn(p)
+      }
+      return
+    }
+
+    const w = screenToWorld(x, y, viewportRef.current)
+
+    if (state === GESTURE.PANNING && panRef.current) {
+      viewportRef.current = {
+        ...viewportRef.current,
+        x: panRef.current.vpX + (x - panRef.current.startX),
+        y: panRef.current.vpY + (y - panRef.current.startY),
+      }
+      return
+    }
+
+    if (state === GESTURE.GRABBING && bodyDragRef.current) {
       bodyDragMovedRef.current = true
       const { id, offsetX, offsetY } = bodyDragRef.current
       bodiesRef.current = bodiesRef.current.map(b =>
-        b.id === id ? { ...b, x: wx - offsetX, y: wy - offsetY, trail: [] } : b
+        b.id === id ? { ...b, x: w.x - offsetX, y: w.y - offsetY, trail: [] } : b
       )
       return
     }
 
-    if (dragRef.current) {
-      dragRef.current = { ...dragRef.current, currentX: wx, currentY: wy }
+    if (state === GESTURE.SPAWNING && dragRef.current) {
+      dragRef.current = { ...dragRef.current, lastScreenX: x, lastScreenY: y }
+      return
     }
 
-    // Hover detection against world-space body positions
-    const hit = bodiesRef.current.find(b => {
-      const dx = b.x - wx
-      const dy = b.y - wy
-      const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
-      return dx * dx + dy * dy < gr * gr
-    }) ?? null
-
+    // IDLE: hover feedback. Mouse only — touch has no hover.
+    if (e.pointerType === 'touch') return
+    const hit = findBodyAt(bodiesRef.current, w.x, w.y, viewportRef.current)
     hoveredIdRef.current = hit?.id ?? null
     setHoveredBody(hit)
     if (hit) {
       setTooltipPos({ x: e.clientX, y: e.clientY })
-      if (!dragRef.current) setCursor('grab')
+      setCursor('grab')
     } else {
-      if (!dragRef.current) setCursor('crosshair')
+      setCursor('crosshair')
     }
-  }, [screenToWorld])
+  }, [clearLongPress, startPan, startSpawn])
 
-  const handleMouseUp = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (e.button === 1) {
-        panRef.current = null
+  /** Open the property editor for a body, positioned at its current screen point. */
+  const openEditorFor = useCallback((id: string) => {
+    const body = bodiesRef.current.find(b => b.id === id)
+    if (!body) return
+    const s = worldToScreen(body.x, body.y, viewportRef.current)
+    editingIdRef.current = id
+    setEditingBody({
+      id, name: body.name, color: body.color, imageUrl: body.imageUrl,
+      type: body.type, screenX: s.x, screenY: s.y,
+    })
+  }, [])
+
+  const commitSpawn = useCallback((clientX: number, clientY: number) => {
+    const drag = dragRef.current
+    dragRef.current = null
+    predictedRef.current = null
+    if (!drag) return
+
+    // Dead zone: never spawn a body under a control.
+    //
+    // This used to be `height - 160`, a magic number that had to be kept in step
+    // with the toolbar by hand. Instead, ask the document what is actually on top
+    // at the release point. That tracks any control we add or move, respects
+    // pointer-events:none gaps in the control layer (which correctly fall through
+    // to the canvas), and will keep working when Phase 4 changes heights again.
+    //
+    // elementFromPoint is used rather than event.target because pointer capture
+    // retargets every event to the canvas, so event.target is always the canvas
+    // once a drag is under way.
+    const top = document.elementFromPoint(clientX, clientY)
+    if (top !== canvasRef.current) return
+
+    let vx = (drag.currentX - drag.startX) * VELOCITY_SCALE
+    let vy = (drag.currentY - drag.startY) * VELOCITY_SCALE
+    // Deltas are already in world space, so velocity is zoom-independent and must
+    // NOT be divided by camera scale. It does need a ceiling, because a full-screen
+    // drag while zoomed out spans a huge world distance.
+    const speed = Math.hypot(vx, vy)
+    if (speed > MAX_SPAWN_SPEED) {
+      vx = (vx / speed) * MAX_SPAWN_SPEED
+      vy = (vy / speed) * MAX_SPAWN_SPEED
+    }
+
+    const type = selectedTypeRef.current
+    const mass = defaultMass(type)
+    bodiesRef.current = [...bodiesRef.current, {
+      id: newId(), type,
+      x: drag.startX, y: drag.startY, vx, vy,
+      ax: 0, ay: 0, prevAx: 0, prevAy: 0,
+      mass, radius: defaultRadius(mass, type),
+      trail: [], color: defaultColor(type), pinned: false,
+    }]
+    setBodyCount(c => c + 1)
+  }, [])
+
+  /** Shared by pointerup and pointercancel. */
+  const endPointer = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>, cancelled: boolean) => {
+      const p = pointersRef.current.get(e.pointerId)
+      pointersRef.current.delete(e.pointerId)
+      const state = gestureRef.current
+
+      if (cancelled) cancelReasonRef.current = 'os-cancel'
+
+      // A pinch never falls back to a one-pointer gesture. Hold LOCKED until every
+      // pointer is up, otherwise lifting one finger silently starts a pan.
+      if (state === GESTURE.PINCHING || state === GESTURE.LOCKED) {
+        pinchRef.current = null
+        if (pointersRef.current.size === 0) resetToIdle()
+        else gestureRef.current = GESTURE.LOCKED
         return
       }
-      if (e.button !== 0) return
 
-      // Release a body drag — or detect a click (no movement) to open the editor
-      if (bodyDragRef.current) {
-        const { id, wasRunning } = bodyDragRef.current
-        bodyDragRef.current = null
-        isRunningRef.current = wasRunning
+      if (pointersRef.current.size > 0) {
+        // Another pointer is still down but we are not pinching: nothing can be
+        // safely resumed, so wait for a clean slate.
+        discardActiveGesture('superseded')
+        gestureRef.current = GESTURE.LOCKED
+        return
+      }
+
+      if (cancelled) {
+        // OS cancel discards, exactly like a supersede. There is no case where an
+        // interrupted gesture should still commit a body.
+        discardActiveGesture('os-cancel')
         hoveredIdRef.current = null
         setCursor('crosshair')
-        if (!bodyDragMovedRef.current) {
-          // Pure click — open the property editor for this body
-          const body = bodiesRef.current.find(b => b.id === id)
-          if (body) {
-            const vp = viewportRef.current
-            editingIdRef.current = id
-            setEditingBody({
-              id,
-              name: body.name,
-              color: body.color,
-              imageUrl: body.imageUrl,
-              type: body.type,
-              screenX: body.x * vp.scale + vp.x,
-              screenY: body.y * vp.scale + vp.y,
-            })
-          }
-        }
+        resetToIdle()
         return
       }
 
-      const drag = dragRef.current
-      dragRef.current = null
-      if (!drag) return
-
-      // Ignore clicks that land on the toolbar area
-      const rect = canvasRef.current!.getBoundingClientRect()
-      const sy = e.clientY - rect.top
-      if (sy > rect.height - 160) return
-
-      const vx = (drag.currentX - drag.startX) * VELOCITY_SCALE
-      const vy = (drag.currentY - drag.startY) * VELOCITY_SCALE
-      const mass = defaultMass(selectedType)
-
-      const body: Body = {
-        id: crypto.randomUUID(),
-        type: selectedType,
-        x: drag.startX,
-        y: drag.startY,
-        vx,
-        vy,
-        ax: 0, ay: 0, prevAx: 0, prevAy: 0,
-        mass,
-        radius: defaultRadius(mass, selectedType),
-        trail: [],
-        color: defaultColor(selectedType),
-        pinned: false,
+      switch (state) {
+        case GESTURE.GRABBING: {
+          const id = bodyDragRef.current?.id
+          const moved = bodyDragMovedRef.current
+          releaseGrab()
+          hoveredIdRef.current = null
+          setCursor('crosshair')
+          if (!moved && id) openEditorFor(id)
+          break
+        }
+        case GESTURE.SPAWNING:
+          commitSpawn(e.clientX, e.clientY)
+          break
+        case GESTURE.PENDING: {
+          // Below both thresholds, or held without moving: a tap.
+          clearLongPress()
+          if (p) {
+            const w = screenToWorld(p.curX, p.curY, viewportRef.current)
+            const hit = findBodyAt(bodiesRef.current, w.x, w.y, viewportRef.current)
+            if (hit) {
+              openEditorFor(hit.id)
+            } else if (interactionModeRef.current === 'spawn') {
+              // Tap on empty space places a body at rest, matching "click to place".
+              startSpawn(p)
+              commitSpawn(e.clientX, e.clientY)
+            }
+          }
+          break
+        }
+        default:
+          break
       }
 
-      bodiesRef.current = [...bodiesRef.current, body]
-      setBodyCount(c => c + 1)
+      resetToIdle()
     },
-    [selectedType]
+    [clearLongPress, commitSpawn, discardActiveGesture, openEditorFor, releaseGrab,
+     resetToIdle, startSpawn]
   )
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => endPointer(e, false),
+    [endPointer]
+  )
+
+  // Android fires pointercancel more than you would expect — system gestures, palm
+  // rejection, an incoming call. All of them discard.
+  const handlePointerCancel = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => endPointer(e, true),
+    [endPointer]
+  )
+
+  // Safety net for a pointer that ends without the canvas handler seeing it — the
+  // browser can revoke capture, and a lost pointerup would otherwise strand the
+  // machine outside IDLE, after which no input is accepted at all. It drives the
+  // machine rather than clearing refs behind its back, for the same reason.
+  useEffect(() => {
+    const onGlobalEnd = (e: PointerEvent) => {
+      if (!pointersRef.current.has(e.pointerId)) return
+      pointersRef.current.delete(e.pointerId)
+      if (pointersRef.current.size > 0) return
+      discardActiveGesture('os-cancel')
+      resetToIdle()
+      hoveredIdRef.current = null
+      setCursor('crosshair')
+    }
+    document.addEventListener('pointerup', onGlobalEnd)
+    document.addEventListener('pointercancel', onGlobalEnd)
+    return () => {
+      document.removeEventListener('pointerup', onGlobalEnd)
+      document.removeEventListener('pointercancel', onGlobalEnd)
+    }
+  }, [discardActiveGesture, resetToIdle])
 
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault()
-    const rect = canvasRef.current!.getBoundingClientRect()
-    const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
-
-    const hit = bodiesRef.current.find(b => {
-      const dx = b.x - wx
-      const dy = b.y - wy
-      const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
-      return dx * dx + dy * dy < gr * gr
-    })
-
+    const { x: wx, y: wy } = eventWorld(e)
+    const hit = findBodyAt(bodiesRef.current, wx, wy, viewportRef.current)
     if (hit) {
       bodiesRef.current = bodiesRef.current.filter(b => b.id !== hit.id)
       setBodyCount(c => c - 1)
@@ -923,39 +1114,67 @@ export default function GravitySandbox() {
         setHoveredBody(null)
       }
     }
-  }, [screenToWorld])
+  }, [eventWorld])
 
-  const handleMouseLeave = useCallback(() => {
-    dragRef.current = null
-    panRef.current = null
+  // Read-only snapshot of the machine. Deliberately always present: the gesture
+  // state is invisible from the outside, and Phase 6 debugging happens over
+  // chrome://inspect on a real device where this is the only way to see it.
+  useEffect(() => {
+    const w = window as Window & { __gesture?: () => unknown }
+    w.__gesture = () => ({
+      state: gestureRef.current,
+      pointers: [...pointersRef.current.values()].map(p => ({
+        id: p.id, x: Math.round(p.curX), y: Math.round(p.curY),
+      })),
+      cancelReason: cancelReasonRef.current,
+      spawning: dragRef.current !== null,
+      grabbing: bodyDragRef.current !== null,
+      panning: panRef.current !== null,
+      grabbedId: bodyDragRef.current?.id ?? null,
+      viewport: { ...viewportRef.current },
+      // World positions, for asserting a body was or was not displaced.
+      bodies: bodiesRef.current.map(b => ({ id: b.id, x: b.x, y: b.y, type: b.type, pinned: !!b.pinned })),
+    })
+    return () => { delete w.__gesture }
+  }, [])
+
+  // Only fires when no pointer is captured, i.e. with nothing held down, so this is
+  // purely hover cleanup. An in-progress drag survives leaving the canvas.
+  const handlePointerLeave = useCallback(() => {
+    if (pointersRef.current.size > 0) return
     hoveredIdRef.current = null
     setHoveredBody(null)
-    if (bodyDragRef.current) {
-      isRunningRef.current = bodyDragRef.current.wasRunning
-      bodyDragRef.current = null
-    }
     setCursor('crosshair')
   }, [])
 
   const handleDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = canvasRef.current!.getBoundingClientRect()
-    const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top)
-    const hit = bodiesRef.current.find(b => {
-      const dx = b.x - wx, dy = b.y - wy
-      const gr = b.type === 'star' ? b.radius * 2.5 : b.type === 'blackhole' ? b.radius * 2.0 : b.radius + 10
-      return dx * dx + dy * dy < gr * gr
-    }) ?? null
+    // Desktop only. Browsers synthesise click/dblclick from a double-tap, but on
+    // touch the first tap already opens the body editor, so the second lands on
+    // whatever is on top by then — the gesture is unreliable rather than merely
+    // awkward. Touch uses the Follow toggle inside the editor instead.
+    if (lastPointerTypeRef.current === 'touch') return
+    const { x: wx, y: wy } = eventWorld(e)
+    const hit = findBodyAt(bodiesRef.current, wx, wy, viewportRef.current)
     if (!hit) return
     if (followIdRef.current === hit.id) {
       followIdRef.current = null
       followedTypeRef.current = null
       setFollowedBody(null)
+      setFollowedId(null)
     } else {
       followIdRef.current = hit.id
       followedTypeRef.current = hit.type
       setFollowedBody(hit.type)
+      setFollowedId(hit.id)
+      // A native double-click fires two full click sequences before the dblclick
+      // event, and a single click on a body always opens the editor — so without
+      // this, double-clicking left both the editor open and follow engaged at
+      // once. Double-click's intent is "follow", not "edit"; the editor opening
+      // was always an artifact of the first click, not a feature.
+      editingIdRef.current = null
+      setEditingBody(null)
     }
-  }, [screenToWorld])
+  }, [eventWorld])
 
   // ── Body editor callbacks ────────────────────────────────────────────────────
 
@@ -970,6 +1189,29 @@ export default function GravitySandbox() {
     editingIdRef.current = null
     setEditingBody(null)
   }, [])
+
+  const clearFollow = useCallback(() => {
+    followIdRef.current = null
+    followedTypeRef.current = null
+    setFollowedBody(null)
+    setFollowedId(null)
+  }, [])
+
+  /** Follow toggle for the body currently open in the editor. */
+  const handleToggleFollow = useCallback(() => {
+    const id = editingIdRef.current
+    if (!id) return
+    if (followIdRef.current === id) {
+      clearFollow()
+      return
+    }
+    const body = bodiesRef.current.find(b => b.id === id)
+    if (!body) return
+    followIdRef.current = body.id
+    followedTypeRef.current = body.type
+    setFollowedBody(body.type)
+    setFollowedId(body.id)
+  }, [clearFollow])
 
   const handleBodyDelete = useCallback(() => {
     const id = editingIdRef.current
@@ -1001,6 +1243,7 @@ export default function GravitySandbox() {
     followIdRef.current = null
     followedTypeRef.current = null
     setFollowedBody(null)
+    setFollowedId(null)
     editingIdRef.current = null
     setEditingBody(null)
     history.replaceState(null, '', window.location.pathname)
@@ -1020,8 +1263,16 @@ export default function GravitySandbox() {
     (name: PresetName) => {
       const canvas = canvasRef.current
       if (!canvas) return
-      const bodies = PRESETS[name](canvas.width, canvas.height, GRef.current)
+      // Presets are in fixed world units, so the camera is framed to them rather
+      // than the layout being sized to the camera.
+      const bodies = PRESETS[name](GRef.current)
       bodiesRef.current = bodies
+      viewportRef.current = frameToFit(
+        bodies,
+        canvasCssSize(canvas, viewportRef.current),
+        viewportRef.current
+      )
+      setZoom(viewportRef.current.scale)
       setBodyCount(bodies.length)
       setHoveredBody(null)
       hoveredIdRef.current = null
@@ -1029,6 +1280,7 @@ export default function GravitySandbox() {
       followIdRef.current = null
       followedTypeRef.current = null
       setFollowedBody(null)
+      setFollowedId(null)
       editingIdRef.current = null
       setEditingBody(null)
     },
@@ -1045,39 +1297,100 @@ export default function GravitySandbox() {
 
   // ── Zoom controls ──────────────────────────────────────────────────────────
 
-  const zoomIn = useCallback(() => {
+  // Zoom about the centre of the canvas in CSS pixels.
+  const zoomFromCentre = useCallback((factor: number) => {
     const canvas = canvasRef.current
     if (!canvas) return
-    applyZoom(1.5, canvas.width / 2, canvas.height / 2)
+    const { width, height } = canvasCssSize(canvas, viewportRef.current)
+    applyZoom(factor, width / 2, height / 2)
   }, [applyZoom])
 
-  const zoomOut = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    applyZoom(1 / 1.5, canvas.width / 2, canvas.height / 2)
-  }, [applyZoom])
+  const zoomIn = useCallback(() => zoomFromCentre(1.5), [zoomFromCentre])
+  const zoomOut = useCallback(() => zoomFromCentre(1 / 1.5), [zoomFromCentre])
 
+  // "Reset view" re-frames whatever is currently in the world. Snapping to
+  // {0,0,1} would leave the world origin in the top-left corner, which since the
+  // preset rework is no longer where anything is.
   const resetView = useCallback(() => {
-    viewportRef.current = { x: 0, y: 0, scale: 1 }
-    setZoom(1)
+    const canvas = canvasRef.current
+    if (!canvas) return
+    viewportRef.current = frameToFit(
+      bodiesRef.current,
+      canvasCssSize(canvas, viewportRef.current),
+      viewportRef.current
+    )
+    setZoom(viewportRef.current.scale)
   }, [])
+
+  // ── Android shell: hardware back + lifecycle ────────────────────────────────
+
+  // Back closes one layer at a time, most-recently-opened first, and only falls
+  // through to exiting from the root state — exiting discards the simulation.
+  const handleBack = useCallback((): boolean => {
+    // Sheets sit above everything else, so they close first — ahead of the body
+    // editor, which can be open underneath one.
+    if (openSheet) {
+      setOpenSheet(null)
+      return true
+    }
+    if (showHelp) {
+      setShowHelp(false)
+      return true
+    }
+    if (editingIdRef.current) {
+      editingIdRef.current = null
+      setEditingBody(null)
+      return true
+    }
+    if (followIdRef.current) {
+      followIdRef.current = null
+      followedTypeRef.current = null
+      setFollowedBody(null)
+      setFollowedId(null)
+      return true
+    }
+    return false
+  }, [showHelp, openSheet])
+
+  // Escape unwinds exactly one layer, same order as the hardware back button.
+  // Previously the sheet had its own Escape listener while this component had
+  // another, so a single press dismissed a sheet AND the editor underneath it.
+  // Escape never falls through to exiting; that is back-button-only behaviour.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.repeat) handleBack()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [handleBack])
+
+  useNativeShell({
+    onBack: handleBack,
+    onPause: () => loopControlRef.current?.stop(),
+    onResume: () => loopControlRef.current?.start(),
+  })
 
   return (
     <div className="relative w-full h-screen overflow-hidden" style={{ background: '#0a0a0f' }}>
       <canvas
         ref={canvasRef}
-        className="absolute inset-0"
+        // w-full h-full gives the canvas an explicit CSS size. Without it the
+        // layout box falls back to the width/height ATTRIBUTES, which sizeCanvas
+        // sets from the layout box — a circular dependency that pins the canvas at
+        // its 300x150 default and makes elementFromPoint miss it entirely.
+        className="absolute inset-0 w-full h-full"
         style={{ cursor, touchAction: 'none' }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onPointerLeave={handlePointerLeave}
         onContextMenu={handleContextMenu}
-        onMouseLeave={handleMouseLeave}
         onDoubleClick={handleDoubleClick}
       />
 
       {/* Top-right: share badge + help button (stacked, no overlap) */}
-      <div className="absolute top-4 right-4 flex flex-col items-end gap-2 z-10 pointer-events-none">
+      <div data-control-layer="top" className="absolute flex flex-col items-end gap-2 z-10 pointer-events-none" style={{ top: 'calc(1rem + env(safe-area-inset-top))', right: 'calc(1rem + env(safe-area-inset-right))' }}>
         {shareCopied && (
           <div className="bg-green-600/90 text-white text-xs px-4 py-2 rounded-full backdrop-blur-sm border border-green-400/30 whitespace-nowrap">
             URL copied to clipboard!
@@ -1085,7 +1398,7 @@ export default function GravitySandbox() {
         )}
         <button
           onClick={() => setShowHelp(true)}
-          className="pointer-events-auto flex items-center gap-1.5 bg-white/5 backdrop-blur-md border border-white/10 rounded-full px-3.5 py-1.5 text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors text-xs font-medium select-none"
+          className="pointer-events-auto flex items-center justify-center gap-1.5 min-h-[48px] px-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors text-xs font-medium select-none"
         >
           ? Help
         </button>
@@ -1093,71 +1406,133 @@ export default function GravitySandbox() {
 
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
 
+      {openSheet === 'presets' && (
+        <Sheet title="Presets" onClose={() => setOpenSheet(null)}>
+          {PRESET_LIST.map(p => (
+            <button
+              key={p.name}
+              onClick={() => { loadPreset(p.name); setOpenSheet(null) }}
+              className="w-full min-h-[56px] text-left px-4 py-3 rounded-xl hover:bg-white/10 transition-colors"
+            >
+              <div className="text-white/90 text-sm font-semibold">{p.label}</div>
+              <div className="text-white/40 text-xs mt-0.5">{p.blurb}</div>
+            </button>
+          ))}
+        </Sheet>
+      )}
+
+      {openSheet === 'bodyType' && (
+        <Sheet title="Body type" onClose={() => setOpenSheet(null)}>
+          {BODY_TYPES.map(t => (
+            <button
+              key={t.type}
+              onClick={() => { setSelectedType(t.type); setOpenSheet(null) }}
+              aria-pressed={selectedType === t.type}
+              className={`w-full min-h-[56px] text-left px-4 py-3 rounded-xl flex items-center gap-3 transition-colors ${
+                selectedType === t.type ? 'bg-white/15 text-white' : 'text-white/70 hover:bg-white/10'
+              }`}
+            >
+              <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: t.color }} />
+              <span className="text-sm font-semibold">{t.label}</span>
+            </button>
+          ))}
+        </Sheet>
+      )}
+
+      {openSheet === 'settings' && (
+        <Sheet title="Settings" onClose={() => setOpenSheet(null)}>
+          {/*
+            Body type also lives here because the standalone button is hidden below
+            400px, where seven 48px targets cannot fit in one row. Shown at every
+            width so the sheet's contents do not change shape with the viewport.
+          */}
+          <div className="p-2 pb-0">
+            <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1.5">Body type</div>
+            <div className="flex gap-1.5 flex-wrap">
+              {BODY_TYPES.map(t => (
+                <button
+                  key={t.type}
+                  onClick={() => setSelectedType(t.type)}
+                  aria-pressed={selectedType === t.type}
+                  className={`min-h-[48px] px-3 rounded-xl flex items-center gap-2 text-xs font-semibold transition-colors ${
+                    selectedType === t.type ? 'bg-white/15 text-white' : 'text-white/60 hover:bg-white/10'
+                  }`}
+                >
+                  <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: t.color }} />
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <SettingsSheetBody
+            G={G} onSetG={setG}
+            speed={speed} onSetSpeed={setSpeed}
+            onReset={reset} onShare={share}
+            bodyCount={bodyCount}
+          />
+        </Sheet>
+      )}
+
       {editingBody && (
         <BodyEditor
           body={editingBody}
           onClose={handleEditorClose}
           onUpdate={handleBodyUpdate}
           onDelete={handleBodyDelete}
+          isFollowing={followedId === editingBody.id}
+          onToggleFollow={handleToggleFollow}
         />
       )}
 
       {/* Title */}
-      <div className="absolute top-4 left-4 pointer-events-none select-none">
+      <div data-control-layer="top" className="absolute pointer-events-none select-none" style={{ top: 'calc(1rem + env(safe-area-inset-top))', left: 'calc(1rem + env(safe-area-inset-left))' }}>
         <p className="text-white/70 text-sm font-semibold tracking-wide">N-Body Gravity Sandbox</p>
         <p className="text-white/30 text-[11px]">Velocity Verlet · Newton&apos;s Law</p>
       </div>
 
       {/* Zoom controls — centered at top */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-white/5 backdrop-blur-md border border-white/10 rounded-full px-3 py-1.5 select-none z-10">
+      <div data-control-layer="top" className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1 bg-white/5 backdrop-blur-md border border-white/10 rounded-full px-3 py-1.5 select-none z-10" style={{ top: 'calc(1rem + env(safe-area-inset-top))' }}>
         <button
           onClick={zoomOut}
-          className="w-6 h-6 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors text-base leading-none"
+          className="w-12 h-12 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors text-lg leading-none"
           title="Zoom out"
         >−</button>
         <button
           onClick={resetView}
-          className="min-w-[54px] text-center text-white/50 hover:text-white/80 text-[11px] font-mono transition-colors px-1"
+          className="min-w-[64px] min-h-[48px] text-center text-white/50 hover:text-white/80 text-[11px] font-mono transition-colors px-1"
           title="Reset view"
         >
           {zoom >= 10 ? zoom.toFixed(1) : zoom >= 1 ? zoom.toFixed(2) : zoom.toFixed(3)}×
         </button>
         <button
           onClick={zoomIn}
-          className="w-6 h-6 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors text-base leading-none"
+          className="w-12 h-12 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors text-lg leading-none"
           title="Zoom in"
         >+</button>
       </div>
 
       {/* Status indicators: rewinding / follow camera */}
       {(isRewinding || followedBody) && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 z-10 pointer-events-none">
+        <div className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 z-10 pointer-events-none" style={{ top: 'calc(4rem + env(safe-area-inset-top))' }}>
           {isRewinding && (
             <div className="bg-purple-700/80 text-white text-xs px-4 py-1.5 rounded-full backdrop-blur-sm border border-purple-400/30 whitespace-nowrap">
               ⏪ Rewinding…
             </div>
           )}
           {followedBody && (
-            <div className="bg-blue-700/70 text-white text-xs px-4 py-1.5 rounded-full backdrop-blur-sm border border-blue-400/30 whitespace-nowrap">
-              Following {followedBody} · Esc to release
-            </div>
+            // Tappable so follow can be released without re-finding the body — which
+            // is the hard part on touch, since the followed body is usually moving.
+            <button
+              onClick={clearFollow}
+              aria-label="Stop following"
+              className="pointer-events-auto min-h-[48px] bg-blue-700/80 hover:bg-blue-600/90 text-white text-xs px-5 rounded-full backdrop-blur-sm border border-blue-400/40 whitespace-nowrap transition-colors"
+            >
+              Following {followedBody} · tap to release
+            </button>
           )}
         </div>
       )}
 
-      {/* Rewind button — hold to scrub back in time (or hold R on keyboard) */}
-      <button
-        onPointerDown={() => { isRewindingRef.current = true; setIsRewinding(true) }}
-        onPointerUp={() => { isRewindingRef.current = false; setIsRewinding(false) }}
-        onPointerLeave={() => { isRewindingRef.current = false; setIsRewinding(false) }}
-        className={`absolute bottom-[180px] left-4 flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium border backdrop-blur-md transition-colors select-none z-10 ${
-          isRewinding
-            ? 'bg-purple-600/80 border-purple-400/50 text-white'
-            : 'bg-white/5 border-white/10 text-white/60 hover:text-white/85 hover:bg-white/10'
-        }`}
-      >
-        ⏪ Rewind
-      </button>
 
       {hoveredBody && (
         <BodyTooltip body={hoveredBody} x={tooltipPos.x} y={tooltipPos.y} />
@@ -1166,17 +1541,18 @@ export default function GravitySandbox() {
       <Toolbar
         selectedType={selectedType}
         onSelectType={setSelectedType}
-        G={G}
-        onSetG={setG}
-        speed={speed}
-        onSetSpeed={setSpeed}
         isRunning={isRunning}
         onPause={pause}
         onResume={resume}
-        onReset={reset}
-        onShare={share}
         onLoadPreset={loadPreset}
         bodyCount={bodyCount}
+        mode={interactionMode}
+        onSetMode={setInteractionMode}
+        openSheet={openSheet}
+        onOpenSheet={setOpenSheet}
+        isRewinding={isRewinding}
+        onRewindStart={startRewind}
+        onRewindStop={stopRewind}
       />
     </div>
   )

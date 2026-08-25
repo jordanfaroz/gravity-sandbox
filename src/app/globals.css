@@ -31,3 +31,24 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+  Mobile/WebView input hardening.
+
+  overscroll-behavior stops Android's pull-to-refresh and overscroll glow from
+  competing with canvas drags. The canvas itself also sets touch-action: none so
+  the browser never claims a drag for scrolling; without it, gestures fight the
+  page. user-select and touch-callout stop long-press from selecting text or
+  raising the system context menu on top of the long-press-to-grab gesture.
+*/
+html,
+body {
+  overscroll-behavior: none;
+}
+
+canvas {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}

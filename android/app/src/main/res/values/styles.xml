@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <!-- Customize your theme here. -->
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <!-- Painted behind the WebView. Capacitor's default is @null, which lets the
+             system's light window background show through before the first canvas frame. -->
+        <item name="android:background">@color/simBackground</item>
+        <item name="android:windowBackground">@color/simBackground</item>
+    </style>
+
+    <!-- Cold-launch theme. Capacitor ships this pointing at @drawable/splash, which is
+         a white PNG. On API 31+ the system splash uses windowSplashScreenBackground;
+         on API 24-30 the core-splashscreen compat path falls back to
+         android:windowBackground. Both are set so the launch window is dark on every
+         supported API level. -->
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/simBackground</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+        <item name="android:background">@color/simBackground</item>
+        <item name="android:windowBackground">@color/simBackground</item>
+    </style>
+</resources>

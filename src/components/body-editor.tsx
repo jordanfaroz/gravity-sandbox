@@ -1,5 +1,6 @@
 'use client'
 
+import { useLayoutEffect, useRef } from 'react'
 import { BodyType } from '@/lib/physics'
 
 export interface EditingBodyState {
@@ -17,6 +18,8 @@ interface Props {
   onClose: () => void
   onUpdate: (updates: Partial<Pick<EditingBodyState, 'name' | 'color' | 'imageUrl'>>) => void
   onDelete: () => void
+  isFollowing: boolean
+  onToggleFollow: () => void
 }
 
 const TYPE_LABEL: Record<BodyType, string> = {
@@ -27,18 +30,75 @@ const TYPE_LABEL: Record<BodyType, string> = {
 }
 
 const PANEL_W = 244
+// Only an initial guess for the pre-measurement render; the real height is
+// measured in a layout effect. Do not rely on this being accurate.
 const PANEL_H = 296
 
-export default function BodyEditor({ body, onClose, onUpdate, onDelete }: Props) {
-  // Position panel to the right of the body, clamped to viewport
-  let left = body.screenX + 20
-  let top = body.screenY - PANEL_H / 2
-  if (typeof window !== 'undefined') {
-    if (left + PANEL_W > window.innerWidth - 8) left = body.screenX - PANEL_W - 20
-    if (left < 8) left = 8
-    if (top < 8) top = 8
-    if (top + PANEL_H > window.innerHeight - 8) top = window.innerHeight - PANEL_H - 8
+/**
+ * Bounds the panel must stay clear of: the viewport, minus whatever the control
+ * layers occupy.
+ *
+ * The control rects are read from `[data-control-layer]` — the same elements the
+ * spawn dead zone hit-tests — rather than a second hardcoded height, so safe-area
+ * insets and any added control move both together. Measured at open time, in
+ * layout-viewport coordinates, matching `body.screenX/Y`.
+ */
+function usableArea(): { top: number; bottom: number; left: number; right: number } {
+  const area = { top: 8, bottom: window.innerHeight - 8, left: 8, right: window.innerWidth - 8 }
+  const mid = window.innerHeight / 2
+  for (const el of document.querySelectorAll('[data-control-layer]')) {
+    const r = el.getBoundingClientRect()
+    if (r.width === 0 || r.height === 0) continue
+    // Classify by which half the layer sits in rather than by touching an edge:
+    // safe-area insets push the top layers away from y=0, so an edge test would
+    // silently stop treating them as obstacles the moment insets appear.
+    if (r.top < mid) area.top = Math.max(area.top, r.bottom + 8)
+    else area.bottom = Math.min(area.bottom, r.top - 8)
   }
+  return area
+}
+
+export default function BodyEditor({ body, onClose, onUpdate, onDelete, isFollowing, onToggleFollow }: Props) {
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // Provisional position, corrected below once the panel can be measured.
+  const left = body.screenX + 20
+  const top = body.screenY - PANEL_H / 2
+
+  /**
+   * Clamp using the panel's MEASURED size, not a constant.
+   *
+   * The panel's height depends on its content — adding the Follow button grew it
+   * from 296px to 442px — so any hardcoded height silently goes stale and the
+   * clamp starts letting the panel run under the controls. Runs in a layout
+   * effect (after DOM mutation, before paint) on every render, so it also tracks
+   * resizes and content changes without a dependency list to keep in sync.
+   */
+  useLayoutEffect(() => {
+    const el = panelRef.current
+    if (!el) return
+    const area = usableArea()
+
+    // Never taller than the space the controls leave. On a short screen with both
+    // a notch and a gesture bar the panel does not fit at its natural height, and
+    // simply clamping the position would push Follow and Delete underneath the
+    // toolbar where they cannot be tapped. Capping and scrolling keeps every
+    // control reachable instead.
+    el.style.maxHeight = `${Math.max(120, area.bottom - area.top)}px`
+
+    const w = el.offsetWidth
+    const h = el.offsetHeight
+
+    let l = body.screenX + 20
+    let t = body.screenY - h / 2
+    if (l + w > area.right) l = body.screenX - w - 20
+    if (l < area.left) l = area.left
+    if (t + h > area.bottom) t = area.bottom - h
+    if (t < area.top) t = area.top
+
+    el.style.left = `${l}px`
+    el.style.top = `${t}px`
+  })
 
   const handleFile = (file: File) => {
     if (!file.type.startsWith('image/')) return
@@ -49,8 +109,10 @@ export default function BodyEditor({ body, onClose, onUpdate, onDelete }: Props)
 
   return (
     <div
+      ref={panelRef}
       style={{ position: 'fixed', left, top, width: PANEL_W, zIndex: 60 }}
-      className="bg-[#0f0f1e]/96 border border-white/15 rounded-xl shadow-2xl text-white text-xs overflow-hidden"
+      data-editor-panel="true"
+      className="bg-[#0f0f1e]/96 border border-white/15 rounded-xl shadow-2xl text-white text-xs overflow-y-auto overscroll-contain"
       onMouseDown={e => e.stopPropagation()}
     >
       {/* Header */}
@@ -64,7 +126,8 @@ export default function BodyEditor({ body, onClose, onUpdate, onDelete }: Props)
         </div>
         <button
           onClick={onClose}
-          className="text-white/40 hover:text-white/80 transition-colors text-base leading-none w-5 h-5 flex items-center justify-center"
+          aria-label="Close"
+          className="text-white/40 hover:text-white/80 transition-colors text-lg leading-none w-12 h-12 -mr-2 flex items-center justify-center rounded-lg hover:bg-white/10"
         >
           ×
         </button>
@@ -138,11 +201,28 @@ export default function BodyEditor({ body, onClose, onUpdate, onDelete }: Props)
         )}
       </div>
 
+      {/* Follow camera — replaces double-tap-to-follow, which is unreliable on
+          touch (the first tap opens this panel, so the second lands on whatever is
+          on top by then). Desktop keeps double-click. */}
+      <div className="px-3 pt-2">
+        <button
+          onClick={onToggleFollow}
+          aria-pressed={isFollowing}
+          className={`w-full min-h-[48px] rounded-lg text-xs font-semibold transition-colors ${
+            isFollowing
+              ? 'bg-blue-500 text-white hover:bg-blue-400'
+              : 'bg-white/10 text-white/70 hover:bg-white/15 hover:text-white'
+          }`}
+        >
+          {isFollowing ? '◎ Following — tap to release' : '◎ Follow this body'}
+        </button>
+      </div>
+
       {/* Delete */}
       <div className="px-3 py-2">
         <button
           onClick={onDelete}
-          className="w-full text-center text-red-400/60 hover:text-red-400 transition-colors py-1 text-[11px]"
+          className="w-full min-h-[48px] text-center text-red-400/70 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors text-xs"
         >
           Delete body
         </button>

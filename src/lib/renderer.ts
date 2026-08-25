@@ -1,19 +1,21 @@
 import { Body } from './physics'
+import type { Viewport } from './camera'
 
 const imageCache = new Map<string, HTMLImageElement>()
 
 export interface DragState {
+  /** World-space anchor, fixed at pointerdown. */
   startX: number
   startY: number
+  /** World-space drag endpoint, re-projected from lastScreen* every frame. */
   currentX: number
   currentY: number
+  /** Canvas CSS position of the pointer, so the endpoint survives camera motion. */
+  lastScreenX: number
+  lastScreenY: number
 }
 
-export interface Viewport {
-  x: number
-  y: number
-  scale: number
-}
+export type { Viewport }
 
 export type ParticleKind = 'spark' | 'fire' | 'smoke' | 'shockwave' | 'flash'
 
@@ -70,7 +72,13 @@ export function draw(
   ctx.fillRect(0, 0, width, height)
 
   ctx.save()
-  ctx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y)
+  // The one place device pixels enter the drawing path: the viewport is expressed
+  // in CSS pixels, so both the scale and the translation are multiplied by the DPR
+  // to map onto the (potentially larger) backing store. Everything drawn below this
+  // line is in world units. `viewport` here already carries the render-only shake
+  // offset; hit-testing deliberately uses the unshaken viewport.
+  const s = viewport.scale * viewport.dpr
+  ctx.setTransform(s, 0, 0, s, viewport.x * viewport.dpr, viewport.y * viewport.dpr)
 
   // Supernova nebulae are the furthest-back layer
   for (const s of supernovas) drawSupernova(ctx, s)

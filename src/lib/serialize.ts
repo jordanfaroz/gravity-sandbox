@@ -1,4 +1,5 @@
 import { Body, BodyType } from './physics'
+import { newId } from './utils'
 
 // Compact tuple: [type, x, y, vx, vy, mass, radius, color, pinned?, name?]
 // imageUrl is intentionally excluded — data URLs are too large for a URL hash
@@ -27,7 +28,7 @@ export function decodeBodies(hash: string): Body[] {
   try {
     const data = JSON.parse(atob(hash)) as MinBody[]
     return data.map(m => ({
-      id: crypto.randomUUID(),
+      id: newId(),
       type: m[0] as BodyType,
       x: m[1],
       y: m[2],

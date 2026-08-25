@@ -1,4 +1,16 @@
 import { Body, BodyType, defaultRadius } from './physics'
+import { newId } from './utils'
+
+// Presets are laid out in FIXED WORLD UNITS centred on the world origin, not in
+// canvas pixels. Sizing them to the canvas made orbital velocities a function of
+// screen size (circV depends on r, and r was derived from canvas.width), so the
+// same preset produced genuinely different dynamics on different devices.
+// The camera is framed to fit after loading — see frameToFit in ./camera.
+//
+// The numbers below are the values the old canvas-relative code produced at
+// 1280x800, so trajectories are unchanged from the previous desktop behaviour.
+const ORIGIN_X = 0
+const ORIGIN_Y = 0
 
 function makeBody(
   type: BodyType,
@@ -11,7 +23,7 @@ function makeBody(
   pinned = false
 ): Body {
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     type, x, y, vx, vy,
     ax: 0, ay: 0, prevAx: 0, prevAy: 0,
     mass,
@@ -29,12 +41,12 @@ export type PresetName =
   | 'binary' | 'solar' | 'figure8' | 'slingshot' | 'blackhole'
   | 'galaxy' | 'chaos' | 'trojan' | 'rogue' | 'quadruple' | 'pulsar'
 
-export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Body[]> = {
+export const PRESETS: Record<PresetName, (G: number) => Body[]> = {
 
   // ── Existing ─────────────────────────────────────────────────────────────
 
-  binary(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  binary(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const M = 500, d = 115
     const v = Math.sqrt(G * M / (4 * d))
     return [
@@ -43,8 +55,8 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
     ]
   },
 
-  solar(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  solar(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const Msun = 1200
     const sun = makeBody('star', cx, cy, 0, 0, Msun, '#FFD700', true)
     const planets = [
@@ -57,8 +69,8 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
     return [sun, ...planets]
   },
 
-  figure8(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  figure8(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const m = 150, L = 110
     const x0 = 0.97000436 * L, y0 = -0.24308753 * L
     const Vscale = Math.sqrt(G * m / L)
@@ -70,14 +82,16 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
     ]
   },
 
-  slingshot(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  slingshot(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const Mbig = 1000
     const planet = makeBody('planet', cx + 80, cy, 0, 0, Mbig, '#4fa3e0', true)
     const asteroids: Body[] = []
     for (let i = 0; i < 12; i++) {
       const t = i / 12
-      const sx = 50 + Math.random() * 30
+      // Was an absolute canvas x of 50, i.e. 590 world units left of a 1280-wide
+      // canvas centre — NOT relative to cx, so it needs the offset baked in.
+      const sx = -590 + Math.random() * 30
       const sy = cy - 320 + t * 640
       const tx = cx + 80 + (Math.random() - 0.5) * 40
       const ty = cy + (Math.random() - 0.5) * 60
@@ -89,8 +103,8 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
     return [planet, ...asteroids]
   },
 
-  blackhole(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  blackhole(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const Mbh = 3000
     const bh = makeBody('blackhole', cx, cy, 0, 0, Mbh, '#0d0020', true)
     const debris: Body[] = []
@@ -108,8 +122,8 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
 
   // ── New ──────────────────────────────────────────────────────────────────
 
-  galaxy(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  galaxy(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const Mbh = 1100
     const bulkVx = 1.9  // approach speed
 
@@ -140,8 +154,8 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
     ]
   },
 
-  chaos(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  chaos(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const m = 280, r = 145
     // Equilateral triangle orbit speed: v = sqrt(G*m / (r*√3))
     const v = Math.sqrt(G * m / (r * Math.sqrt(3)))
@@ -159,8 +173,8 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
     })
   },
 
-  trojan(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  trojan(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const Mstar = 1100
     const star = makeBody('star', cx, cy, 0, 0, Mstar, '#FFD700', true)
 
@@ -190,8 +204,8 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
     return [star, planet, ...trojans]
   },
 
-  rogue(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  rogue(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const Msun = 1100
     const sun = makeBody('star', cx, cy, 0, 0, Msun, '#FFD700', true)
 
@@ -202,14 +216,15 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
       { r: 285, m: 7,  c: '#c478e8' },
     ].map(({ r, m, c }) => makeBody('planet', cx + r, cy, 0, circV(G, Msun, r), m, c))
 
-    // Rogue star enters from the left on a hyperbolic trajectory — aim just past the sun
-    const rogue = makeBody('star', cx - w * 0.55, cy - 110, 5.8, 0.35, 380, '#FF6633')
+    // Rogue star enters from the left on a hyperbolic trajectory — aim just past the
+    // sun. The entry distance was `w * 0.55`, i.e. 704 world units at a 1280 canvas.
+    const rogue = makeBody('star', cx - 704, cy - 110, 5.8, 0.35, 380, '#FF6633')
 
     return [sun, ...planets, rogue]
   },
 
-  quadruple(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  quadruple(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const m = 200      // mass of each star
     const D = 148      // distance from total COM to each pair's COM
     const d = 38       // half-separation within each pair
@@ -229,8 +244,8 @@ export const PRESETS: Record<PresetName, (w: number, h: number, G: number) => Bo
     ]
   },
 
-  pulsar(w, h, G) {
-    const cx = w / 2, cy = h / 2
+  pulsar(G) {
+    const cx = ORIGIN_X, cy = ORIGIN_Y
     const Mbh = 3200
     const bh = makeBody('blackhole', cx, cy, 0, 0, Mbh, '#0d0020')
 
