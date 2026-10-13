@@ -2,6 +2,7 @@ import { chromium } from 'playwright'
 const [url] = process.argv.slice(2)
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+await page.addInitScript(() => { try { localStorage.setItem('nbody.tutorial.v1', 'skipped') } catch {} })
 const frames = () => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))
 
 await page.goto(url, { waitUntil: 'networkidle' })
@@ -17,6 +18,8 @@ await page.evaluate(() => {
 })
 
 await page.getByRole('button', { name: /Pause/ }).click()
+// Presets moved into a sheet in Phase 4b, after this script was written.
+await page.getByRole('button', { name: 'Presets' }).click()
 await page.getByRole('button', { name: 'Solar System', exact: true }).click()
 await frames()
 

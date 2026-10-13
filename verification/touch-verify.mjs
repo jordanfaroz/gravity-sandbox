@@ -12,6 +12,7 @@ const [url] = process.argv.slice(2)
 const browser = await chromium.launch()
 const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true })
 const page = await context.newPage()
+await page.addInitScript(() => { try { localStorage.setItem('nbody.tutorial.v1', 'skipped') } catch {} })
 const cdp = await context.newCDPSession(page)
 
 const errors = []

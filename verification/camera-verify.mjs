@@ -17,6 +17,10 @@ const [url, outDir, label] = process.argv.slice(2)
 
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+// Pre-dates the onboarding tutorial, which auto-shows on any fresh context
+// (correct per spec: every Playwright launch IS a first visit) and would
+// otherwise intercept the first Escape press meant for something else here.
+await page.addInitScript(() => { try { localStorage.setItem('nbody.tutorial.v1', 'skipped') } catch {} })
 
 const errors = []
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
@@ -48,6 +52,8 @@ await page.waitForTimeout(1200)
 // wall-clock amount before the pause lands, which makes body positions — and
 // therefore every hash — differ between runs.
 await page.getByRole('button', { name: /Pause/ }).click()
+// Presets moved into a sheet in Phase 4b, after this script was written.
+await page.getByRole('button', { name: 'Presets' }).click()
 await page.getByRole('button', { name: 'Solar System' }).click()
 await frames()
 

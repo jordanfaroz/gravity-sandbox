@@ -68,6 +68,20 @@ Each harness prints `PASS`/`FAIL` per check and a summary line; a nonzero
 exit isn't wired up, so read the summary count, don't just check the exit
 code.
 
+## Pure-logic unit tests (no browser, no static server)
+
+| Script | Phase | Invariant it asserts | Command |
+|---|---|---|---|
+| `tutorial-verify.mjs` | onboarding tutorial | Step state machine (advance/back/skip/orbit-fail/show-me transitions), persistence version-key policy, and the orbit-classification math (bound/escaping energy, tap-launch detection, angle-wraparound, a full synthetic circular orbit resolving to success, a fast departure resolving to escaped) — 36 checks | `node verification/tutorial-verify.mjs` |
+
+Written as `.mjs` deliberately, not `.ts`, even though the logic under test
+(`src/tutorial/*.ts`) is TypeScript: Next's own typecheck sweeps up
+`**/*.ts` project-wide and rejects the explicit `.ts` extensions Node's ESM
+loader requires on relative imports. Node's native type stripping (23.6+)
+still handles the imported `.ts` modules transparently — only this file's
+own extension needed to change. This exits nonzero on failure, unlike the
+browser harnesses above.
+
 ## Debug probes (raw output, not pass/fail)
 
 Kept because they're the actual evidence behind two durable rules, not

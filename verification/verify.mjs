@@ -3,6 +3,7 @@ import { chromium } from 'playwright'
 const url = process.argv[2]
 const browser = await chromium.launch()
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+await page.addInitScript(() => { try { localStorage.setItem('nbody.tutorial.v1', 'skipped') } catch {} })
 
 const errors = []
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
@@ -17,7 +18,9 @@ const canvasInfo = await page.evaluate(() => {
   return { found: true, w: c.width, h: c.height }
 })
 
-// Load a preset (Solar System) so there are bodies to simulate
+// Load a preset (Solar System) so there are bodies to simulate. Presets moved
+// into a sheet in Phase 4b, after this script was written — open it first.
+await page.getByRole('button', { name: 'Presets' }).click()
 await page.getByRole('button', { name: 'Solar System' }).click()
 await page.waitForTimeout(300)
 

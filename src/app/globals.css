@@ -52,3 +52,26 @@ canvas {
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+
+/* Tutorial spotlight ring + ghost-hand drag loop. Skipped entirely under
+   reduced motion — the overlay swaps these classes out rather than relying on
+   @media (prefers-reduced-motion) here, since it already knows the preference
+   via usePrefersReducedMotion and needs to swap the ghost-hand for a static icon. */
+@keyframes tutorial-pulse {
+  0%, 100% { box-shadow: 0 0 0 9999px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,255,255,0.7); }
+  50% { box-shadow: 0 0 0 9999px rgba(0,0,0,0.6), 0 0 0 6px rgba(255,255,255,0.35); }
+}
+.tutorial-cutout-pulse {
+  animation: tutorial-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tutorial-ghost-drag {
+  0%, 10% { transform: translate(0, 0) scale(1); opacity: 0; }
+  20% { opacity: 0.85; }
+  55% { transform: translate(46px, -28px) scale(0.92); opacity: 0.85; }
+  70% { opacity: 0; }
+  100% { transform: translate(0, 0) scale(1); opacity: 0; }
+}
+.tutorial-ghost-hand {
+  animation: tutorial-ghost-drag 2.4s ease-in-out infinite;
+}

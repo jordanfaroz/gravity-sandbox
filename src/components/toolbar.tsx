@@ -108,6 +108,7 @@ export default function Toolbar({
         */}
         <button
           data-control="rewind"
+          data-tutorial="rewind"
           onPointerDown={e => { onRewindStart(); capturePointer(e) }}
           onPointerUp={onRewindStop}
           onPointerCancel={onRewindStop}
@@ -124,6 +125,7 @@ export default function Toolbar({
 
         <button
           data-control="playpause"
+          data-tutorial="pause"
           onClick={isRunning ? onPause : onResume}
           title={isRunning ? 'Pause' : 'Play'}
           aria-label={isRunning ? 'Pause' : 'Play'}
@@ -169,6 +171,7 @@ export default function Toolbar({
 
         <button
           data-control="presets"
+          data-tutorial="presets"
           onClick={() => onOpenSheet(openSheet === 'presets' ? null : 'presets')}
           aria-label="Presets"
           title="Load a preset scenario"
@@ -219,6 +222,7 @@ export function SettingsSheetBody({
         <input
           type="range" min={0.1} max={5} step={0.1} value={speed}
           aria-label="Speed"
+          data-tutorial="speed"
           onChange={e => onSetSpeed(parseFloat(e.target.value))}
           className="w-full h-12 accent-blue-400"
         />

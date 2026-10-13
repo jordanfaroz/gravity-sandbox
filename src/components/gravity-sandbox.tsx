@@ -20,6 +20,12 @@ import Sheet from './sheet'
 import BodyTooltip from './body-tooltip'
 import HelpModal from './help-modal'
 import BodyEditor, { EditingBodyState } from './body-editor'
+import { createEventBus } from '@/tutorial/events'
+import { useTutorial, SimFrameCallback } from '@/tutorial/use-tutorial'
+import { usePointerKind, usePrefersReducedMotion } from '@/tutorial/hooks'
+import { circularOrbitSpeed } from '@/tutorial/orbit'
+import TutorialOverlay from '@/tutorial/TutorialOverlay'
+import ClutterPrompt from '@/tutorial/ClutterPrompt'
 
 const VELOCITY_SCALE = 0.05
 const MAX_BODIES = 45
@@ -29,6 +35,9 @@ const MAX_HISTORY = 300
 const RESIZE_DEBOUNCE_MS = 150
 const PREVIEW_COLORS: Record<BodyType, string> = {
   star: '#FFD700', planet: '#4fa3e0', blackhole: '#9944ff', asteroid: '#9a9a9a',
+}
+const TOOL_DATA_TUTORIAL: Partial<Record<BodyType, string>> = {
+  star: 'star-tool', planet: 'planet-tool', blackhole: 'blackhole-tool',
 }
 
 export default function GravitySandbox() {
@@ -64,6 +73,12 @@ export default function GravitySandbox() {
   // Set by the rAF effect so lifecycle events (visibilitychange, Capacitor
   // pause/resume) can halt and restart the loop without double-starting it.
   const loopControlRef = useRef<{ start: () => void; stop: () => void } | null>(null)
+
+  // Tutorial plumbing. simFrameCbRef is set only while the tutorial's orbit step
+  // is watching; cameraMoved is diffed against lastCameraEmitRef rather than
+  // instrumenting every one of the five viewport-mutating call sites.
+  const simFrameCbRef = useRef<SimFrameCallback | null>(null)
+  const lastCameraEmitRef = useRef({ x: 0, y: 0, scale: 1, t: 0 })
 
   // Mirror selectedType in a ref so pointer handlers never read a stale value
   const selectedTypeRef = useRef<BodyType>('planet')
@@ -106,6 +121,10 @@ export default function GravitySandbox() {
   const [followedId, setFollowedId] = useState<string | null>(null)
   const [openSheet, setOpenSheet] = useState<SheetName | null>(null)
   useEffect(() => { interactionModeRef.current = interactionMode }, [interactionMode])
+
+  const [eventBus] = useState(createEventBus)
+  const pointerKind = usePointerKind()
+  const reducedMotion = usePrefersReducedMotion()
 
   // Canvas-local CSS coords for a mouse event, then the world point under it.
   const eventWorld = useCallback((e: { clientX: number; clientY: number }) => {
@@ -229,8 +248,21 @@ export default function GravitySandbox() {
       if (!isRewindingRef.current && isRunningRef.current && delta > 0) {
         historyRef.current.push(bodiesRef.current.map(b => ({ ...b, trail: [] })))
         if (historyRef.current.length > MAX_HISTORY) historyRef.current.shift()
+        const idsBeforeStep = bodiesRef.current.length > 0 ? new Set(bodiesRef.current.map(b => b.id)) : null
         const { bodies, collisions } = step(bodiesRef.current, GRef.current, dt)
         bodiesRef.current = bodies
+
+        // Merged-away bodies: diffed against the pre-step id set rather than reading
+        // a removed-id off CollisionEvent (which doesn't carry one) — this also
+        // catches any future removal path inside step() for free.
+        if (idsBeforeStep) {
+          const idsAfterStep = new Set(bodies.map(b => b.id))
+          for (const id of idsBeforeStep) {
+            if (!idsAfterStep.has(id)) eventBus.emit({ type: 'bodyRemoved', id, reason: 'merged' })
+          }
+        }
+
+        simFrameCbRef.current?.(bodies, delta * speedRef.current, GRef.current)
 
         for (const ev of collisions) {
           // Supernova: star + star collision — unique massive explosion
@@ -556,6 +588,20 @@ export default function GravitySandbox() {
         }
       }
 
+      // cameraMoved: diffed against the last emitted viewport and throttled, rather
+      // than instrumenting wheel/pinch/pan/zoom-buttons/resetView individually.
+      // Threshold avoids firing on float drift; throttle caps it at 4/sec.
+      {
+        const vp = viewportRef.current
+        const last = lastCameraEmitRef.current
+        const moved =
+          Math.abs(vp.x - last.x) > 0.5 || Math.abs(vp.y - last.y) > 0.5 || Math.abs(vp.scale - last.scale) > 0.0005
+        if (moved && timestamp - last.t > 250) {
+          lastCameraEmitRef.current = { x: vp.x, y: vp.y, scale: vp.scale, t: timestamp }
+          eventBus.emit({ type: 'cameraMoved' })
+        }
+      }
+
       const ctx = canvas!.getContext('2d')
       if (ctx) {
         // Screen shake is RENDER-ONLY. It is applied to a throwaway copy of the
@@ -615,7 +661,7 @@ export default function GravitySandbox() {
       clearInterval(urlTimer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [sizeCanvas])
+  }, [sizeCanvas, eventBus])
 
   // Resize canvas to fill the window
   useEffect(() => {
@@ -667,7 +713,11 @@ export default function GravitySandbox() {
   // (defined below, after the gesture callbacks it depends on)
 
   // Rewind is driven by both the hold-to-rewind button and the R key; one impl.
-  const startRewind = useCallback(() => { isRewindingRef.current = true; setIsRewinding(true) }, [])
+  const startRewind = useCallback(() => {
+    isRewindingRef.current = true
+    setIsRewinding(true)
+    eventBus.emit({ type: 'rewindUsed' })
+  }, [eventBus])
   const stopRewind = useCallback(() => { isRewindingRef.current = false; setIsRewinding(false) }, [])
 
   // Keyboard: hold R to rewind. Escape is handled separately, below, because it
@@ -983,15 +1033,17 @@ export default function GravitySandbox() {
 
     const type = selectedTypeRef.current
     const mass = defaultMass(type)
+    const id = newId()
     bodiesRef.current = [...bodiesRef.current, {
-      id: newId(), type,
+      id, type,
       x: drag.startX, y: drag.startY, vx, vy,
       ax: 0, ay: 0, prevAx: 0, prevAy: 0,
       mass, radius: defaultRadius(mass, type),
       trail: [], color: defaultColor(type), pinned: false,
     }]
     setBodyCount(c => c + 1)
-  }, [])
+    eventBus.emit({ type: 'bodySpawned', bodyType: type, id, vx, vy })
+  }, [eventBus])
 
   /** Shared by pointerup and pointercancel. */
   const endPointer = useCallback(
@@ -1113,8 +1165,9 @@ export default function GravitySandbox() {
         hoveredIdRef.current = null
         setHoveredBody(null)
       }
+      eventBus.emit({ type: 'bodyRemoved', id: hit.id, reason: 'deleted' })
     }
-  }, [eventWorld])
+  }, [eventWorld, eventBus])
 
   // Read-only snapshot of the machine. Deliberately always present: the gesture
   // state is invisible from the outside, and Phase 6 debugging happens over
@@ -1220,19 +1273,22 @@ export default function GravitySandbox() {
     setBodyCount(c => c - 1)
     editingIdRef.current = null
     setEditingBody(null)
-  }, [])
+    eventBus.emit({ type: 'bodyRemoved', id, reason: 'deleted' })
+  }, [eventBus])
 
   // ── Toolbar actions ──────────────────────────────────────────────────────────
 
   const pause = useCallback(() => {
     isRunningRef.current = false
     setIsRunning(false)
-  }, [])
+    eventBus.emit({ type: 'pausedChanged', running: false })
+  }, [eventBus])
 
   const resume = useCallback(() => {
     isRunningRef.current = true
     setIsRunning(true)
-  }, [])
+    eventBus.emit({ type: 'pausedChanged', running: true })
+  }, [eventBus])
 
   const reset = useCallback(() => {
     bodiesRef.current = []
@@ -1257,12 +1313,14 @@ export default function GravitySandbox() {
   const setSpeed = useCallback((v: number) => {
     speedRef.current = v
     setSpeedState(v)
-  }, [])
+    eventBus.emit({ type: 'speedChanged', value: v })
+  }, [eventBus])
 
   const loadPreset = useCallback(
     (name: PresetName) => {
       const canvas = canvasRef.current
       if (!canvas) return
+      eventBus.emit({ type: 'presetLoaded', name })
       // Presets are in fixed world units, so the camera is framed to them rather
       // than the layout being sized to the camera.
       const bodies = PRESETS[name](GRef.current)
@@ -1284,7 +1342,7 @@ export default function GravitySandbox() {
       editingIdRef.current = null
       setEditingBody(null)
     },
-    []
+    [eventBus]
   )
 
   const share = useCallback(() => {
@@ -1322,11 +1380,71 @@ export default function GravitySandbox() {
     setZoom(viewportRef.current.scale)
   }, [])
 
+  // ── Tutorial ─────────────────────────────────────────────────────────────────
+
+  const registerSimFrame = useCallback((cb: SimFrameCallback | null) => { simFrameCbRef.current = cb }, [])
+  const getBodyCount = useCallback(() => bodiesRef.current.length, [])
+
+  /** "Show me": places a planet at exact circular-orbit speed around the star. */
+  const placeOrbitingPlanet = useCallback((starId: string) => {
+    const star = bodiesRef.current.find(b => b.id === starId)
+    if (!star) return
+    const r = Math.max(140, star.radius * 8)
+    const v = circularOrbitSpeed(GRef.current, star.mass, r)
+    const mass = defaultMass('planet')
+    const id = newId()
+    const vx = star.vx
+    const vy = star.vy + v
+    bodiesRef.current = [...bodiesRef.current, {
+      id, type: 'planet',
+      x: star.x + r, y: star.y, vx, vy,
+      ax: 0, ay: 0, prevAx: 0, prevAy: 0,
+      mass, radius: defaultRadius(mass, 'planet'),
+      trail: [], color: defaultColor('planet'), pinned: false,
+    }]
+    setBodyCount(c => c + 1)
+    eventBus.emit({ type: 'bodySpawned', bodyType: 'planet', id, vx, vy })
+  }, [eventBus])
+
+  const tutorial = useTutorial({
+    eventBus,
+    getBodyCount,
+    onClearScene: reset,
+    registerSimFrame,
+    placeOrbitingPlanet,
+  })
+
+  /** Projects the tutorial's tracked star into screen space for the ghost-hand. */
+  const getStarScreenPos = useCallback(() => {
+    const id = tutorial.starId
+    if (!id) return null
+    const star = bodiesRef.current.find(b => b.id === id)
+    if (!star) return null
+    return worldToScreen(star.x, star.y, viewportRef.current)
+  }, [tutorial.starId])
+
+  /** Only the Presets sheet needs to emit — closing paths don't. */
+  const openSheetFromToolbar = useCallback((s: SheetName | null) => {
+    if (s === 'presets') eventBus.emit({ type: 'presetsOpened' })
+    setOpenSheet(s)
+  }, [eventBus])
+
   // ── Android shell: hardware back + lifecycle ────────────────────────────────
 
   // Back closes one layer at a time, most-recently-opened first, and only falls
   // through to exiting from the root state — exiting discards the simulation.
+  const tutorialActive = tutorial.state.active
   const handleBack = useCallback((): boolean => {
+    // Tutorial sits above everything else it opens (including a sheet it opened
+    // itself), so it unwinds first — same as Skip.
+    if (tutorial.clutterPrompt) {
+      tutorial.resolveClutter(false)
+      return true
+    }
+    if (tutorialActive) {
+      tutorial.skip()
+      return true
+    }
     // Sheets sit above everything else, so they close first — ahead of the body
     // editor, which can be open underneath one.
     if (openSheet) {
@@ -1350,7 +1468,10 @@ export default function GravitySandbox() {
       return true
     }
     return false
-  }, [showHelp, openSheet])
+    // Depends on the specific stable values handleBack reads, not the whole
+    // tutorial object — that object literal is rebuilt every render, which
+    // would otherwise re-subscribe the Escape listener below on every render.
+  }, [showHelp, openSheet, tutorial.clutterPrompt, tutorialActive, tutorial.resolveClutter, tutorial.skip])
 
   // Escape unwinds exactly one layer, same order as the hardware back button.
   // Previously the sheet had its own Escape listener while this component had
@@ -1380,6 +1501,8 @@ export default function GravitySandbox() {
         // its 300x150 default and makes elementFromPoint miss it entirely.
         className="absolute inset-0 w-full h-full"
         style={{ cursor, touchAction: 'none' }}
+        data-tutorial="canvas"
+        tabIndex={-1}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -1404,7 +1527,9 @@ export default function GravitySandbox() {
         </button>
       </div>
 
-      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {showHelp && (
+        <HelpModal onClose={() => setShowHelp(false)} onReplayTutorial={() => { setShowHelp(false); tutorial.requestStart() }} />
+      )}
 
       {openSheet === 'presets' && (
         <Sheet title="Presets" onClose={() => setOpenSheet(null)}>
@@ -1426,6 +1551,7 @@ export default function GravitySandbox() {
           {BODY_TYPES.map(t => (
             <button
               key={t.type}
+              data-tutorial={TOOL_DATA_TUTORIAL[t.type]}
               onClick={() => { setSelectedType(t.type); setOpenSheet(null) }}
               aria-pressed={selectedType === t.type}
               className={`w-full min-h-[56px] text-left px-4 py-3 rounded-xl flex items-center gap-3 transition-colors ${
@@ -1549,11 +1675,30 @@ export default function GravitySandbox() {
         mode={interactionMode}
         onSetMode={setInteractionMode}
         openSheet={openSheet}
-        onOpenSheet={setOpenSheet}
+        onOpenSheet={openSheetFromToolbar}
         isRewinding={isRewinding}
         onRewindStart={startRewind}
         onRewindStop={stopRewind}
       />
+
+      {tutorial.clutterPrompt && <ClutterPrompt onResolve={tutorial.resolveClutter} />}
+
+      {/* Mounted only while active: its two rAF-driven measurement loops should
+          not run in the background for the rest of a normal play session. */}
+      {tutorial.state.active && (
+        <TutorialOverlay
+          tutorialState={tutorial.state}
+          pointerKind={pointerKind}
+          reducedMotion={reducedMotion}
+          selectedType={selectedType}
+          onOpenSheet={openSheetFromToolbar}
+          onSkip={tutorial.skip}
+          onBack={tutorial.back}
+          onNext={tutorial.next}
+          onShowMe={tutorial.showMe}
+          getStarScreenPos={getStarScreenPos}
+        />
+      )}
     </div>
   )
 }

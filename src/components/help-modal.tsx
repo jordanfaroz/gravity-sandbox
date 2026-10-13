@@ -522,7 +522,13 @@ function PhysicsTab() {
 
 // ── Main export ────────────────────────────────────────────────────────────
 
-export default function HelpModal({ onClose }: { onClose: () => void }) {
+export default function HelpModal({
+  onClose,
+  onReplayTutorial,
+}: {
+  onClose: () => void
+  onReplayTutorial?: () => void
+}) {
   const [tab, setTab] = useState<Tab>('controls')
   const tabs: { key: Tab; label: string }[] = [
     { key: 'controls', label: 'Controls' },
@@ -545,10 +551,20 @@ export default function HelpModal({ onClose }: { onClose: () => void }) {
             <h2 className="text-white font-semibold text-base leading-tight">Gravity Sandbox — Guide</h2>
             <p className="text-white/36 text-[11px] mt-1">N-body physics · Velocity Verlet · Newton's law of gravitation</p>
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-full text-white/38 hover:text-white hover:bg-white/10 transition-colors text-xl leading-none ml-4 flex-shrink-0 mt-0.5"
-          >×</button>
+          <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+            {onReplayTutorial && (
+              <button
+                onClick={onReplayTutorial}
+                className="min-h-[32px] px-3 rounded-full border border-white/15 text-white/55 hover:text-white hover:bg-white/10 transition-colors text-xs font-medium whitespace-nowrap"
+              >
+                Replay tutorial
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center rounded-full text-white/38 hover:text-white hover:bg-white/10 transition-colors text-xl leading-none mt-0.5"
+            >×</button>
+          </div>
         </div>
 
         {/* Tab bar */}
