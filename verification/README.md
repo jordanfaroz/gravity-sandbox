@@ -67,6 +67,7 @@ for trusting the results:
 | `snapshot-verify.mjs` | web-first (snapshot & clip) | "Save image" downloads a non-empty PNG; "Record 10s clip" shows a recording state, waits out the full 10s, and downloads a non-empty WebM | `node verification/snapshot-verify.mjs http://localhost:4190` |
 | `my-scenes-verify.mjs` | web-first (my scenes) | Save/load/delete named scenes with a thumbnail, round-tripping through `localStorage` and surviving a real page reload | `node verification/my-scenes-verify.mjs http://localhost:4190` |
 | `pwa-verify.mjs` | web-first (installable PWA) | Manifest is linked and valid (standalone display, 512×512 + maskable icons); the service worker reaches `activated`; a reload while offline still renders the canvas; a shared-scene link still restores correctly with the service worker installed | `node verification/pwa-verify.mjs http://localhost:4190` |
+| `shortcuts-verify.mjs` | web-first (fullscreen + shortcuts) | Space pauses/resumes, +/- adjusts speed, F doesn't throw, ? opens the help overlay, and none of these fire while typing in the "name this scene" field | `node verification/shortcuts-verify.mjs http://localhost:4190` |
 
 Each harness prints `PASS`/`FAIL` per check and a summary line; a nonzero
 exit isn't wired up, so read the summary count, don't just check the exit

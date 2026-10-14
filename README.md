@@ -104,7 +104,11 @@ src/
 | Zoom | Scroll wheel (centered on cursor) or ± buttons at top |
 | Pan | Middle-mouse drag |
 | Hover info | Mouse over any body — shows type, mass, speed |
-| Pause / resume | Toolbar button |
+| Pause / resume | Toolbar button or Space |
+| Rewind | Hold R |
+| Adjust speed | Speed slider or +/- |
+| Fullscreen | Toolbar button or F |
+| Shortcuts / guide | Help button or ? |
 | Share | Encodes bodies + speed into the URL hash, opens the native share sheet where supported, otherwise copies the link to clipboard |
 | Save image | Downloads the current canvas as a PNG |
 | Record 10s clip | Downloads a 10-second WebM recording of the canvas (hidden if the browser doesn't support `canvas.captureStream`) |

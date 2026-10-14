@@ -40,6 +40,19 @@ const TOOL_DATA_TUTORIAL: Partial<Record<BodyType, string>> = {
   star: 'star-tool', planet: 'planet-tool', blackhole: 'blackhole-tool',
 }
 
+// Global keyboard shortcuts must not fire while the user is typing into a
+// text field (e.g. naming a saved scene) — 'f', 'r' and space are all
+// plausible characters to type. Range/color/file inputs don't accept typed
+// characters, so they're deliberately excluded — a slider keeping focus after
+// a drag should not silently swallow the +/- shortcut.
+const TEXT_INPUT_TYPES = new Set(['text', 'search', 'email', 'number', 'tel', 'url', 'password'])
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable) return true
+  if (target.tagName === 'TEXTAREA') return true
+  return target.tagName === 'INPUT' && TEXT_INPUT_TYPES.has((target as HTMLInputElement).type)
+}
+
 export default function GravitySandbox() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -117,6 +130,7 @@ export default function GravitySandbox() {
   // server-side prerender), same reasoning as canRecord above.
   const [myScenes, setMyScenes] = useState<SavedScene[]>([])
   const [newSceneName, setNewSceneName] = useState('')
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [cursor, setCursor] = useState<string>('crosshair')
   const [isRewinding, setIsRewinding] = useState(false)
@@ -742,10 +756,11 @@ export default function GravitySandbox() {
   // the back-precedence chain.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat) return
+      if (e.repeat || isEditableTarget(e.target)) return
       if (e.key === 'r' || e.key === 'R') startRewind()
     }
     const onKeyUp = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return
       if (e.key === 'r' || e.key === 'R') stopRewind()
     }
     window.addEventListener('keydown', onKeyDown)
@@ -1334,6 +1349,52 @@ export default function GravitySandbox() {
     eventBus.emit({ type: 'speedChanged', value: v })
   }, [eventBus])
 
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {})
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {})
+    }
+  }, [])
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
+  // Keyboard: space (pause/resume), +/- (speed), F (fullscreen), ? (shortcuts
+  // overlay). R and Escape have their own effects elsewhere, kept separate
+  // rather than merged so each stays independently easy to follow.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || isEditableTarget(e.target)) return
+      switch (e.key) {
+        case ' ':
+          e.preventDefault()
+          if (isRunningRef.current) pause(); else resume()
+          break
+        case '+':
+        case '=':
+          setSpeed(Math.min(5, +(speedRef.current + 0.5).toFixed(1)))
+          break
+        case '-':
+        case '_':
+          setSpeed(Math.max(0.1, +(speedRef.current - 0.5).toFixed(1)))
+          break
+        case 'f':
+        case 'F':
+          toggleFullscreen()
+          break
+        case '?':
+          setShowHelp(true)
+          break
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [pause, resume, setSpeed, toggleFullscreen])
+
   const loadPreset = useCallback(
     (name: PresetName) => {
       const canvas = canvasRef.current
@@ -1633,12 +1694,22 @@ export default function GravitySandbox() {
             URL copied to clipboard!
           </div>
         )}
-        <button
-          onClick={() => setShowHelp(true)}
-          className="pointer-events-auto flex items-center justify-center gap-1.5 min-h-[48px] px-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors text-xs font-medium select-none"
-        >
-          ? Help
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={toggleFullscreen}
+            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
+            className="pointer-events-auto flex items-center justify-center min-h-[48px] min-w-[48px] bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors select-none"
+          >
+            {isFullscreen ? '⤡' : '⤢'}
+          </button>
+          <button
+            onClick={() => setShowHelp(true)}
+            className="pointer-events-auto flex items-center justify-center gap-1.5 min-h-[48px] px-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors text-xs font-medium select-none"
+          >
+            ? Help
+          </button>
+        </div>
       </div>
 
       {showHelp && (

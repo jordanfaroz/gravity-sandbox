@@ -358,6 +358,11 @@ function ControlsTab() {
             ['Share',                    'Encode the simulation into the URL — paste it anywhere to restore'],
             ['G slider',                 'Adjust the gravitational constant (stronger = faster orbits)'],
             ['Speed slider',             'Run simulation up to 5× faster or slower than real-time'],
+            ['Space',                    'Pause / resume the simulation'],
+            ['Hold R',                   'Rewind through recent history'],
+            ['+ / -',                    'Speed up or slow down the simulation'],
+            ['F',                        'Toggle fullscreen'],
+            ['?',                        'Open this guide'],
           ].map(([k, v], i) => <Row key={i} label={k} value={v} alt={i % 2 === 0} />)}
         </div>
       </div>
