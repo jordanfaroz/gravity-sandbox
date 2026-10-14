@@ -14,7 +14,8 @@ import {
 import { encodeScene, decodeScene } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import { newId, downloadBlob } from '@/lib/utils'
-import Toolbar, { SheetName, SettingsSheetBody, BODY_TYPES, PRESET_LIST } from './toolbar'
+import { SavedScene, loadScenes, saveScene, deleteScene } from '@/lib/my-scenes'
+import Toolbar, { SheetName, SettingsSheetBody, MyScenesSection, BODY_TYPES, PRESET_LIST } from './toolbar'
 import Sheet from './sheet'
 import BodyTooltip from './body-tooltip'
 import HelpModal from './help-modal'
@@ -112,6 +113,10 @@ export default function GravitySandbox() {
   const [canRecord, setCanRecord] = useState(false)
   const [recordSecondsLeft, setRecordSecondsLeft] = useState(0)
   const isRecordingRef = useRef(false)
+  // Empty until the mount effect loads localStorage (unavailable during the
+  // server-side prerender), same reasoning as canRecord above.
+  const [myScenes, setMyScenes] = useState<SavedScene[]>([])
+  const [newSceneName, setNewSceneName] = useState('')
   const [zoom, setZoom] = useState(1)
   const [cursor, setCursor] = useState<string>('crosshair')
   const [isRewinding, setIsRewinding] = useState(false)
@@ -125,7 +130,11 @@ export default function GravitySandbox() {
 
   useEffect(() => {
     const supported = typeof MediaRecorder !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype
-    queueMicrotask(() => setCanRecord(supported))
+    const scenes = loadScenes()
+    queueMicrotask(() => {
+      setCanRecord(supported)
+      setMyScenes(scenes)
+    })
   }, [])
 
   const [eventBus] = useState(createEventBus)
@@ -1424,6 +1433,48 @@ export default function GravitySandbox() {
     }, 10000)
   }, [])
 
+  // ── My scenes (localStorage) ─────────────────────────────────────────────────
+
+  const makeThumbnail = useCallback((): string => {
+    const canvas = canvasRef.current
+    if (!canvas) return ''
+    const THUMB_W = 96, THUMB_H = 60
+    const off = document.createElement('canvas')
+    off.width = THUMB_W
+    off.height = THUMB_H
+    const ctx = off.getContext('2d')
+    if (!ctx) return ''
+    ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, THUMB_W, THUMB_H)
+    return off.toDataURL('image/jpeg', 0.5)
+  }, [])
+
+  const saveCurrentScene = useCallback(() => {
+    const hash = encodeScene(bodiesRef.current, speedRef.current)
+    const name = newSceneName.trim() || `Scene ${new Date().toLocaleDateString()}`
+    setMyScenes(saveScene(name, hash, makeThumbnail()))
+    setNewSceneName('')
+  }, [newSceneName, makeThumbnail])
+
+  const loadSavedScene = useCallback((scene: SavedScene) => {
+    const decoded = decodeScene(scene.hash)
+    if (!decoded) return
+    bodiesRef.current = decoded.bodies
+    speedRef.current = decoded.speed
+    setSpeedState(decoded.speed)
+    setBodyCount(decoded.bodies.length)
+    const canvas = canvasRef.current
+    if (canvas) {
+      viewportRef.current = frameToFit(decoded.bodies, canvasCssSize(canvas, viewportRef.current), viewportRef.current)
+      setZoom(viewportRef.current.scale)
+    }
+    window.location.hash = scene.hash
+    setOpenSheet(null)
+  }, [])
+
+  const deleteSavedScene = useCallback((id: string) => {
+    setMyScenes(deleteScene(id))
+  }, [])
+
   // ── Zoom controls ──────────────────────────────────────────────────────────
 
   // Zoom about the centre of the canvas in CSS pixels.
@@ -1606,6 +1657,14 @@ export default function GravitySandbox() {
               <div className="text-white/40 text-xs mt-0.5">{p.blurb}</div>
             </button>
           ))}
+          <MyScenesSection
+            scenes={myScenes}
+            newSceneName={newSceneName}
+            onNewSceneNameChange={setNewSceneName}
+            onSave={saveCurrentScene}
+            onLoad={loadSavedScene}
+            onDelete={deleteSavedScene}
+          />
         </Sheet>
       )}
 

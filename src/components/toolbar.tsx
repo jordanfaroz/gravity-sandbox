@@ -1,8 +1,10 @@
 'use client'
 
+import Image from 'next/image'
 import { BodyType } from '@/lib/physics'
 import { InteractionMode } from '@/lib/gestures'
 import { PresetName } from '@/lib/presets'
+import { SavedScene } from '@/lib/my-scenes'
 
 export type SheetName = 'presets' | 'settings' | 'bodyType'
 
@@ -252,6 +254,73 @@ export function SettingsSheetBody({
       <div className="text-white/35 text-xs text-center">
         {bodyCount} {bodyCount === 1 ? 'body' : 'bodies'} in the simulation
       </div>
+    </div>
+  )
+}
+
+export interface MyScenesProps {
+  scenes: SavedScene[]
+  newSceneName: string
+  onNewSceneNameChange: (name: string) => void
+  onSave: () => void
+  onLoad: (scene: SavedScene) => void
+  onDelete: (id: string) => void
+}
+
+/** "My scenes" section appended below the built-in preset list. */
+export function MyScenesSection({
+  scenes, newSceneName, onNewSceneNameChange, onSave, onLoad, onDelete,
+}: MyScenesProps) {
+  return (
+    <div className="border-t border-white/10 mt-2 pt-3">
+      <div className="text-white/40 text-[10px] uppercase tracking-wider mb-2 px-1">My scenes</div>
+      <div className="flex gap-2 px-1 mb-2">
+        <input
+          type="text"
+          value={newSceneName}
+          onChange={e => onNewSceneNameChange(e.target.value)}
+          placeholder="Name this scene"
+          maxLength={40}
+          className="flex-1 min-h-[48px] rounded-xl bg-black/40 border border-white/15 px-3 text-sm text-white placeholder:text-white/30 outline-none focus:border-white/40"
+        />
+        <button onClick={onSave} className={`${BTN} px-4 ${BTN_IDLE}`}>Save</button>
+      </div>
+      {scenes.length === 0 ? (
+        <div className="text-white/35 text-xs text-center py-3">No saved scenes yet</div>
+      ) : (
+        <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto px-1">
+          {[...scenes].reverse().map(scene => (
+            <div key={scene.id} className="flex items-center gap-2.5 bg-white/5 rounded-xl p-2">
+              {scene.thumbnail ? (
+                <Image
+                  src={scene.thumbnail}
+                  alt=""
+                  width={56}
+                  height={35}
+                  unoptimized
+                  className="rounded-md object-cover flex-shrink-0 border border-white/10"
+                />
+              ) : (
+                <div className="w-14 h-[35px] rounded-md bg-white/10 flex-shrink-0" />
+              )}
+              <span className="flex-1 text-sm text-white/85 truncate">{scene.name}</span>
+              <button
+                onClick={() => onLoad(scene)}
+                className="min-h-[40px] px-3 rounded-lg text-xs font-semibold text-blue-300 hover:bg-white/10"
+              >
+                Load
+              </button>
+              <button
+                onClick={() => onDelete(scene.id)}
+                aria-label={`Delete ${scene.name}`}
+                className="min-h-[40px] px-3 rounded-lg text-xs font-semibold text-red-300 hover:bg-white/10"
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
