@@ -62,7 +62,6 @@ await frames()
 for (const [label, spread] of [['pinch in ', 1.9], ['pinch out', 0.55]]) {
   const MID = { x: 520, y: 330 }
   const g0 = await gesture()
-  const sun0 = g0.bodies[0]
   const z0 = await zoomNow()
   const vp0 = g0.viewport
   const d0 = 140
@@ -87,16 +86,6 @@ for (const [label, spread] of [['pinch in ', 1.9], ['pinch out', 0.55]]) {
   const drift = Math.hypot(w1.x - w0.x, w1.y - w0.y)
   check(`${label}: anchor drift ${drift.toFixed(4)} < 0.5 world units`, drift < 0.5, true)
   await assertIdle(label)
-}
-
-// Anchor invariant measured directly: world point under the midpoint is unchanged.
-{
-  const MID = { x: 480, y: 300 }
-  const worldAtMid = () => page.evaluate((m) => {
-    const g = window.__gesture()
-    return g.__world ? null : null
-  }, MID)
-  void worldAtMid
 }
 
 // ── 2. Second finger mid-spawn-drag -> no body created on release ─────────────

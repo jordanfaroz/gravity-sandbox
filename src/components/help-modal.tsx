@@ -465,7 +465,7 @@ function PhysicsTab() {
   return (
     <div className="space-y-6">
       <div>
-        <SH>Newton's Law of Universal Gravitation</SH>
+        <SH>Newton&apos;s Law of Universal Gravitation</SH>
         <SD>Every body attracts every other body each frame. The force between any two masses is:</SD>
         <Code>F = G × m₁ × m₂ / (d² + ε)</Code>
         <SD>
@@ -549,7 +549,7 @@ export default function HelpModal({
         <div className="flex items-start justify-between px-6 py-5 border-b border-white/10 flex-shrink-0">
           <div>
             <h2 className="text-white font-semibold text-base leading-tight">Gravity Sandbox — Guide</h2>
-            <p className="text-white/36 text-[11px] mt-1">N-body physics · Velocity Verlet · Newton's law of gravitation</p>
+            <p className="text-white/36 text-[11px] mt-1">N-body physics · Velocity Verlet · Newton&apos;s law of gravitation</p>
           </div>
           <div className="flex items-center gap-2 ml-4 flex-shrink-0">
             {onReplayTutorial && (

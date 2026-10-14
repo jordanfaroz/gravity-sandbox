@@ -211,7 +211,6 @@ export default function GravitySandbox() {
       const decoded = decodeBodies(hash)
       if (decoded.length > 0) {
         bodiesRef.current = decoded
-        setBodyCount(decoded.length)
         // Shared links carry absolute world coordinates but no camera, so a link
         // authored on a desktop used to open with its bodies off-screen on a phone.
         // Framing on load makes an existing link render correctly on any device
@@ -221,7 +220,12 @@ export default function GravitySandbox() {
           canvasCssSize(canvas, viewportRef.current),
           viewportRef.current
         )
-        setZoom(viewportRef.current.scale)
+        // Deferred: setState calls directly in an effect body trigger cascading
+        // renders; queueMicrotask runs this right after mount without that cost.
+        queueMicrotask(() => {
+          setBodyCount(decoded.length)
+          setZoom(viewportRef.current.scale)
+        })
       }
     }
 
@@ -1471,6 +1475,7 @@ export default function GravitySandbox() {
     // Depends on the specific stable values handleBack reads, not the whole
     // tutorial object — that object literal is rebuilt every render, which
     // would otherwise re-subscribe the Escape listener below on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showHelp, openSheet, tutorial.clutterPrompt, tutorialActive, tutorial.resolveClutter, tutorial.skip])
 
   // Escape unwinds exactly one layer, same order as the hardware back button.

@@ -1,6 +1,7 @@
 'use client'
 
 import { useLayoutEffect, useRef } from 'react'
+import Image from 'next/image'
 import { BodyType } from '@/lib/physics'
 
 export interface EditingBodyState {
@@ -171,9 +172,12 @@ export default function BodyEditor({ body, onClose, onUpdate, onDelete, isFollow
         <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1.5">Image (replaces body look)</div>
         {body.imageUrl ? (
           <div className="flex items-center gap-2.5">
-            <img
+            <Image
               src={body.imageUrl}
               alt=""
+              width={40}
+              height={40}
+              unoptimized
               className="w-10 h-10 rounded-full object-cover border border-white/20 flex-shrink-0"
             />
             <button

@@ -82,7 +82,7 @@ export const PRESETS: Record<PresetName, (G: number) => Body[]> = {
     ]
   },
 
-  slingshot(G) {
+  slingshot() {
     const cx = ORIGIN_X, cy = ORIGIN_Y
     const Mbig = 1000
     const planet = makeBody('planet', cx + 80, cy, 0, 0, Mbig, '#4fa3e0', true)
