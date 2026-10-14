@@ -28,8 +28,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // No maximumScale/userScalable: capping page zoom is an accessibility
+  // violation (low-vision users rely on pinch-zoom), and it isn't needed for
+  // the camera's own pinch-to-zoom — that's scoped to the canvas alone via
+  // `touch-action: none`, not by disabling page zoom globally.
   // Required for env(safe-area-inset-*) to resolve to real values. targetSdk 35+
   // forces edge-to-edge on Android, so the system bars draw over the page whether
   // we ask for this or not; without `cover` the insets read as 0 and the controls
