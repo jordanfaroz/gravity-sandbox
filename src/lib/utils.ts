@@ -8,10 +8,10 @@ export function cn(...inputs: ClassValue[]) {
 /**
  * Unique id for a body.
  *
- * minSdkVersion 24 admits devices whose Android System WebView may predate
- * Chromium 92, where crypto.randomUUID does not exist. The ids are only ever
- * compared for equality within a session, so the fallback does not need to be a
- * real UUID — it just has to not collide.
+ * crypto.randomUUID requires a secure context and a reasonably recent browser,
+ * so older browsers and plain-HTTP previews need a fallback. The ids are only
+ * ever compared for equality within a session, so the fallback does not need to
+ * be a real UUID — it just has to not collide.
  */
 export const newId = (): string =>
   globalThis.crypto?.randomUUID?.() ??

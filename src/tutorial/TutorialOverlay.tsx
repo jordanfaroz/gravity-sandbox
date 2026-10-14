@@ -118,9 +118,9 @@ export default function TutorialOverlay({
   }, [stepIndex, onNext])
 
   // Escape is NOT handled here — it goes through the host's single handleBack
-  // precedence chain (shared with the hardware back button and every sheet),
-  // same as the rest of the app. A second listener here would reintroduce the
-  // exact duplicate-Escape-listener bug Phase 4c already fixed once.
+  // precedence chain (shared with every sheet), same as the rest of the app.
+  // A second listener here would reintroduce the exact duplicate-Escape-listener
+  // bug Phase 4c already fixed once.
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {

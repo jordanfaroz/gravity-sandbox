@@ -2,6 +2,8 @@
 
 Interactive gravitational physics simulation running entirely in the browser. Place stars, planets, black holes, and asteroids on a canvas — watch real orbits emerge from Newton's law of universal gravitation, computed fresh every frame with no physics library.
 
+Web-only, deployed on Vercel at [nbody.jordworld.com](https://nbody.jordworld.com). An earlier plan to ship this as a Capacitor-wrapped Android app was dropped in favor of the website alone — see git history (pre-`web-first` branch) if you need that code.
+
 ## How the physics works
 
 Every body exerts a force on every other body each frame:

@@ -9,11 +9,10 @@ interface Props {
 /**
  * Bottom sheet for controls that do not earn a place in the persistent bar.
  *
- * Dismissible three ways: tapping the backdrop, the close control, and the
- * hardware back button (wired in the caller's back-precedence chain, ahead of the
- * body editor, and shared with Escape). The sheet deliberately does NOT listen
- * for Escape itself: a private listener here plus the chain in the host closed two
- * layers on one press.
+ * Dismissible three ways: tapping the backdrop, the close control, and Escape
+ * (wired in the caller's back-precedence chain, ahead of the body editor). The
+ * sheet deliberately does NOT listen for Escape itself: a private listener here
+ * plus the chain in the host closed two layers on one press.
  *
  * NOT marked data-control-layer: it is transient, and the spawn dead zone and the
  * editor's clamp both treat control layers as permanently occupied space. The

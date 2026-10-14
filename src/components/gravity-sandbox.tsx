@@ -14,7 +14,6 @@ import {
 import { encodeBodies, decodeBodies } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import { newId } from '@/lib/utils'
-import { useNativeShell } from '@/lib/use-native-shell'
 import Toolbar, { SheetName, SettingsSheetBody, BODY_TYPES, PRESET_LIST } from './toolbar'
 import Sheet from './sheet'
 import BodyTooltip from './body-tooltip'
@@ -70,9 +69,6 @@ export default function GravitySandbox() {
   const shakeRef = useRef({ x: 0, y: 0 })
   const bodyDragMovedRef = useRef(false)
   const editingIdRef = useRef<string | null>(null)
-  // Set by the rAF effect so lifecycle events (visibilitychange, Capacitor
-  // pause/resume) can halt and restart the loop without double-starting it.
-  const loopControlRef = useRef<{ start: () => void; stop: () => void } | null>(null)
 
   // Tutorial plumbing. simFrameCbRef is set only while the tutorial's orbit step
   // is watching; cameraMoved is diffed against lastCameraEmitRef rather than
@@ -625,9 +621,8 @@ export default function GravitySandbox() {
       rafRef.current = requestAnimationFrame(tick)
     }
 
-    // Guarded so the loop can never be started twice. Android can deliver both
-    // visibilitychange and the Capacitor pause/resume pair for the same transition;
-    // without the guard that would leave two rAF loops running at double speed.
+    // Guarded so the loop can never be started twice, in case visibilitychange
+    // ever fires more than once for the same transition.
     let loopRunning = false
 
     const startLoop = () => {
@@ -645,7 +640,6 @@ export default function GravitySandbox() {
     }
 
     startLoop()
-    loopControlRef.current = { start: startLoop, stop: stopLoop }
 
     const urlTimer = setInterval(() => {
       if (bodiesRef.current.length > 0) {
@@ -661,7 +655,6 @@ export default function GravitySandbox() {
 
     return () => {
       stopLoop()
-      loopControlRef.current = null
       clearInterval(urlTimer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
@@ -724,8 +717,8 @@ export default function GravitySandbox() {
   }, [eventBus])
   const stopRewind = useCallback(() => { isRewindingRef.current = false; setIsRewinding(false) }, [])
 
-  // Keyboard: hold R to rewind. Escape is handled separately, below, because it
-  // shares the hardware back button's precedence chain.
+  // Keyboard: hold R to rewind. Escape is handled separately, below, as part of
+  // the back-precedence chain.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return
@@ -1433,55 +1426,52 @@ export default function GravitySandbox() {
     setOpenSheet(s)
   }, [eventBus])
 
-  // ── Android shell: hardware back + lifecycle ────────────────────────────────
+  // ── Escape precedence ───────────────────────────────────────────────────────
 
-  // Back closes one layer at a time, most-recently-opened first, and only falls
-  // through to exiting from the root state — exiting discards the simulation.
+  // Closes the single most-recently-opened layer, checked in nesting order.
   const tutorialActive = tutorial.state.active
-  const handleBack = useCallback((): boolean => {
+  const handleBack = useCallback(() => {
     // Tutorial sits above everything else it opens (including a sheet it opened
     // itself), so it unwinds first — same as Skip.
     if (tutorial.clutterPrompt) {
       tutorial.resolveClutter(false)
-      return true
+      return
     }
     if (tutorialActive) {
       tutorial.skip()
-      return true
+      return
     }
     // Sheets sit above everything else, so they close first — ahead of the body
     // editor, which can be open underneath one.
     if (openSheet) {
       setOpenSheet(null)
-      return true
+      return
     }
     if (showHelp) {
       setShowHelp(false)
-      return true
+      return
     }
     if (editingIdRef.current) {
       editingIdRef.current = null
       setEditingBody(null)
-      return true
+      return
     }
     if (followIdRef.current) {
       followIdRef.current = null
       followedTypeRef.current = null
       setFollowedBody(null)
       setFollowedId(null)
-      return true
+      return
     }
-    return false
     // Depends on the specific stable values handleBack reads, not the whole
     // tutorial object — that object literal is rebuilt every render, which
     // would otherwise re-subscribe the Escape listener below on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showHelp, openSheet, tutorial.clutterPrompt, tutorialActive, tutorial.resolveClutter, tutorial.skip])
 
-  // Escape unwinds exactly one layer, same order as the hardware back button.
-  // Previously the sheet had its own Escape listener while this component had
-  // another, so a single press dismissed a sheet AND the editor underneath it.
-  // Escape never falls through to exiting; that is back-button-only behaviour.
+  // Escape closes exactly one layer. Previously the sheet had its own Escape
+  // listener while this component had another, so a single press dismissed a
+  // sheet AND the editor underneath it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !e.repeat) handleBack()
@@ -1489,12 +1479,6 @@ export default function GravitySandbox() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [handleBack])
-
-  useNativeShell({
-    onBack: handleBack,
-    onPause: () => loopControlRef.current?.stop(),
-    onResume: () => loopControlRef.current?.start(),
-  })
 
   return (
     <div className="relative w-full h-screen overflow-hidden" style={{ background: '#0a0a0f' }}>
