@@ -109,6 +109,7 @@ src/
 | Adjust speed | Speed slider or +/- |
 | Fullscreen | Toolbar button or F |
 | Shortcuts / guide | Help button or ? |
+| Collapse/expand side panel | Panel toggle or [ (≥1366px only) |
 | Share | Encodes bodies + speed into the URL hash, opens the native share sheet where supported, otherwise copies the link to clipboard |
 | Save image | Downloads the current canvas as a PNG |
 | Record 10s clip | Downloads a 10-second WebM recording of the canvas (hidden if the browser doesn't support `canvas.captureStream`) |
@@ -122,6 +123,10 @@ src/
 ## Shareable URLs
 
 The full simulation state is encoded as a compact base64 string in `window.location.hash`. Trails and runtime IDs are stripped — only position, velocity, mass, radius, color, and type are saved. Pasting the URL exactly restores the simulation at that moment.
+
+## Desktop panel
+
+At ≥1366px wide, the controls move into a persistent right-side panel instead of the bottom bar + sheets — presets, body type, settings, and "my scenes" are all inline, no modals needed. Collapsible via its own toggle or the `[` key; the choice is remembered in `localStorage`. Phones and narrower viewports (including this suite's standard 1280px test width) are untouched.
 
 ## Embed mode
 

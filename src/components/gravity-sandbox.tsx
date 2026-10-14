@@ -15,7 +15,8 @@ import { encodeScene, decodeScene } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import { newId, downloadBlob } from '@/lib/utils'
 import { SavedScene, loadScenes, saveScene, deleteScene } from '@/lib/my-scenes'
-import Toolbar, { SheetName, SettingsSheetBody, MyScenesSection, EmbedToolbar, BODY_TYPES, PRESET_LIST } from './toolbar'
+import Toolbar, { SheetName, SettingsSheetBody, MyScenesSection, EmbedToolbar, BODY_TYPES, PRESET_LIST, TOOL_DATA_TUTORIAL } from './toolbar'
+import DesktopPanel from './desktop-panel'
 import Sheet from './sheet'
 import BodyTooltip from './body-tooltip'
 import HelpModal from './help-modal'
@@ -35,9 +36,6 @@ const MAX_HISTORY = 300
 const RESIZE_DEBOUNCE_MS = 150
 const PREVIEW_COLORS: Record<BodyType, string> = {
   star: '#FFD700', planet: '#4fa3e0', blackhole: '#9944ff', asteroid: '#9a9a9a',
-}
-const TOOL_DATA_TUTORIAL: Partial<Record<BodyType, string>> = {
-  star: 'star-tool', planet: 'planet-tool', blackhole: 'blackhole-tool',
 }
 
 // Global keyboard shortcuts must not fire while the user is typing into a
@@ -134,6 +132,12 @@ export default function GravitySandbox() {
   // False until the mount effect below reads the query string (unavailable
   // during the server-side prerender).
   const [isEmbed, setIsEmbed] = useState(false)
+  // Same reasoning: false for both the prerender and the first client render,
+  // then corrected from a matchMedia check once mounted. Means a desktop
+  // visitor sees one frame of the mobile layout before the panel appears,
+  // which is the trade for never producing a hydration mismatch.
+  const [isDesktop, setIsDesktop] = useState(false)
+  const [panelCollapsed, setPanelCollapsed] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [cursor, setCursor] = useState<string>('crosshair')
   const [isRewinding, setIsRewinding] = useState(false)
@@ -149,11 +153,23 @@ export default function GravitySandbox() {
     const supported = typeof MediaRecorder !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype
     const scenes = loadScenes()
     const embedded = new URLSearchParams(window.location.search).get('embed') === '1'
+    // 1366px, not the more common 1024px lg breakpoint: this suite's existing
+    // harnesses standardize on a 1280×800 test viewport for "desktop" already,
+    // and this must not flip them onto the new panel layout underneath them.
+    const desktopQuery = window.matchMedia('(min-width: 1366px)')
+    const storedCollapsed = (() => {
+      try { return localStorage.getItem('nbody.panelCollapsed') === '1' } catch { return false }
+    })()
     queueMicrotask(() => {
       setCanRecord(supported)
       setMyScenes(scenes)
       setIsEmbed(embedded)
+      setIsDesktop(desktopQuery.matches)
+      setPanelCollapsed(storedCollapsed)
     })
+    const onDesktopChange = () => setIsDesktop(desktopQuery.matches)
+    desktopQuery.addEventListener('change', onDesktopChange)
+    return () => desktopQuery.removeEventListener('change', onDesktopChange)
   }, [])
 
   const [eventBus] = useState(createEventBus)
@@ -1368,6 +1384,14 @@ export default function GravitySandbox() {
     return () => document.removeEventListener('fullscreenchange', onChange)
   }, [])
 
+  const togglePanelCollapsed = useCallback(() => {
+    setPanelCollapsed(prev => {
+      const next = !prev
+      try { localStorage.setItem('nbody.panelCollapsed', next ? '1' : '0') } catch {}
+      return next
+    })
+  }, [])
+
   // Keyboard: space (pause/resume), +/- (speed), F (fullscreen), ? (shortcuts
   // overlay). R and Escape have their own effects elsewhere, kept separate
   // rather than merged so each stays independently easy to follow.
@@ -1396,11 +1420,16 @@ export default function GravitySandbox() {
           // alongside in embed mode.
           if (!isEmbed) setShowHelp(true)
           break
+        case '[':
+          // Only meaningful on the desktop panel layout — a no-op on mobile,
+          // where there's no panel to collapse.
+          if (isDesktop) togglePanelCollapsed()
+          break
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [pause, resume, setSpeed, toggleFullscreen, isEmbed])
+  }, [pause, resume, setSpeed, toggleFullscreen, isEmbed, isDesktop, togglePanelCollapsed])
 
   const loadPreset = useCallback(
     (name: PresetName) => {
@@ -1696,9 +1725,24 @@ export default function GravitySandbox() {
       />
 
       {/* Top-right: share badge + help button (stacked, no overlap). Hidden in
-          embed mode, which shows only the minimal toolbar below. */}
+          embed mode, which shows only the minimal toolbar below. Offset clear
+          of the desktop panel when it's expanded, or it sits under it. */}
       {!isEmbed && (
-        <div data-control-layer="top" className="absolute flex flex-col items-end gap-2 z-10 pointer-events-none" style={{ top: 'calc(1rem + env(safe-area-inset-top))', right: 'calc(1rem + env(safe-area-inset-right))' }}>
+        <div
+          data-control-layer="top"
+          className="absolute flex flex-col items-end gap-2 z-10 pointer-events-none"
+          style={{
+            top: 'calc(1rem + env(safe-area-inset-top))',
+            // Clears the expanded panel (320px) or just its collapsed toggle
+            // strip (~56px) — without this, the toggle renders underneath
+            // this cluster and becomes unreachable.
+            right: !isDesktop
+              ? 'calc(1rem + env(safe-area-inset-right))'
+              : panelCollapsed
+                ? 'calc(56px + env(safe-area-inset-right))'
+                : 'calc(320px + 1rem + env(safe-area-inset-right))',
+          }}
+        >
           {shareCopied && (
             <div className="bg-green-600/90 text-white text-xs px-4 py-2 rounded-full backdrop-blur-sm border border-green-400/30 whitespace-nowrap">
               URL copied to clipboard!
@@ -1727,7 +1771,9 @@ export default function GravitySandbox() {
         <HelpModal onClose={() => setShowHelp(false)} onReplayTutorial={() => { setShowHelp(false); tutorial.requestStart() }} />
       )}
 
-      {openSheet === 'presets' && (
+      {/* Sheets are a mobile-only interaction pattern — the desktop panel shows
+          all of this inline instead, with no need to open/close anything. */}
+      {!isDesktop && openSheet === 'presets' && (
         <Sheet title="Presets" onClose={() => setOpenSheet(null)}>
           {PRESET_LIST.map(p => (
             <button
@@ -1750,7 +1796,7 @@ export default function GravitySandbox() {
         </Sheet>
       )}
 
-      {openSheet === 'bodyType' && (
+      {!isDesktop && openSheet === 'bodyType' && (
         <Sheet title="Body type" onClose={() => setOpenSheet(null)}>
           {BODY_TYPES.map(t => (
             <button
@@ -1769,7 +1815,7 @@ export default function GravitySandbox() {
         </Sheet>
       )}
 
-      {openSheet === 'settings' && (
+      {!isDesktop && openSheet === 'settings' && (
         <Sheet title="Settings" onClose={() => setOpenSheet(null)}>
           {/*
             Body type also lives here because the standalone button is hidden below
@@ -1884,6 +1930,38 @@ export default function GravitySandbox() {
           onPause={pause}
           onResume={resume}
           fullSandboxHref={`${window.location.pathname}${window.location.hash}`}
+        />
+      ) : isDesktop ? (
+        <DesktopPanel
+          selectedType={selectedType}
+          onSelectType={setSelectedType}
+          isRunning={isRunning}
+          onPause={pause}
+          onResume={resume}
+          onLoadPreset={loadPreset}
+          mode={interactionMode}
+          onSetMode={setInteractionMode}
+          isRewinding={isRewinding}
+          onRewindStart={startRewind}
+          onRewindStop={stopRewind}
+          collapsed={panelCollapsed}
+          onToggleCollapsed={togglePanelCollapsed}
+          settings={{
+            G, onSetG: setG,
+            speed, onSetSpeed: setSpeed,
+            onReset: reset, onShare: share,
+            onSaveImage: saveImage, onRecordClip: recordClip,
+            canRecord, recordSecondsLeft,
+            bodyCount,
+          }}
+          myScenes={{
+            scenes: myScenes,
+            newSceneName,
+            onNewSceneNameChange: setNewSceneName,
+            onSave: saveCurrentScene,
+            onLoad: loadSavedScene,
+            onDelete: deleteSavedScene,
+          }}
         />
       ) : (
         <Toolbar

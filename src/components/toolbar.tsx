@@ -46,6 +46,12 @@ export const BODY_TYPES: { type: BodyType; label: string; color: string }[] = [
   { type: 'asteroid',  label: 'Asteroid',   color: '#9a9a9a' },
 ]
 
+/** Spotlight targets for the tutorial's tool-choice steps — shared between the
+ * mobile body-type sheet and the desktop panel's inline picker. */
+export const TOOL_DATA_TUTORIAL: Partial<Record<BodyType, string>> = {
+  star: 'star-tool', planet: 'planet-tool', blackhole: 'blackhole-tool',
+}
+
 export const PRESET_LIST: { name: PresetName; label: string; blurb: string }[] = [
   { name: 'binary',    label: 'Binary Stars',     blurb: 'Two stars locked in mutual orbit' },
   { name: 'solar',     label: 'Solar System',     blurb: 'A pinned sun with five planets' },

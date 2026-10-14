@@ -363,6 +363,7 @@ function ControlsTab() {
             ['+ / -',                    'Speed up or slow down the simulation'],
             ['F',                        'Toggle fullscreen'],
             ['?',                        'Open this guide'],
+            ['[',                        'Collapse/expand the side panel (wide screens only)'],
           ].map(([k, v], i) => <Row key={i} label={k} value={v} alt={i % 2 === 0} />)}
         </div>
       </div>
