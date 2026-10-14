@@ -11,7 +11,7 @@ import {
   GESTURE, Gesture, PointerState, CancelReason, distance,
   TAP_MAX_PX, LONG_PRESS_MS, LONG_PRESS_MAX_PX, MAX_SPAWN_SPEED, InteractionMode,
 } from '@/lib/gestures'
-import { encodeBodies, decodeBodies } from '@/lib/serialize'
+import { encodeScene, decodeScene } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import { newId } from '@/lib/utils'
 import Toolbar, { SheetName, SettingsSheetBody, BODY_TYPES, PRESET_LIST } from './toolbar'
@@ -204,23 +204,25 @@ export default function GravitySandbox() {
 
     const hash = window.location.hash.slice(1)
     if (hash) {
-      const decoded = decodeBodies(hash)
-      if (decoded.length > 0) {
-        bodiesRef.current = decoded
+      const scene = decodeScene(hash)
+      if (scene) {
+        bodiesRef.current = scene.bodies
+        speedRef.current = scene.speed
         // Shared links carry absolute world coordinates but no camera, so a link
         // authored on a desktop used to open with its bodies off-screen on a phone.
         // Framing on load makes an existing link render correctly on any device
         // without changing the encoding.
         viewportRef.current = frameToFit(
-          decoded,
+          scene.bodies,
           canvasCssSize(canvas, viewportRef.current),
           viewportRef.current
         )
         // Deferred: setState calls directly in an effect body trigger cascading
         // renders; queueMicrotask runs this right after mount without that cost.
         queueMicrotask(() => {
-          setBodyCount(decoded.length)
+          setBodyCount(scene.bodies.length)
           setZoom(viewportRef.current.scale)
+          setSpeedState(scene.speed)
         })
       }
     }
@@ -643,7 +645,7 @@ export default function GravitySandbox() {
 
     const urlTimer = setInterval(() => {
       if (bodiesRef.current.length > 0) {
-        window.location.hash = encodeBodies(bodiesRef.current)
+        window.location.hash = encodeScene(bodiesRef.current, speedRef.current)
       }
     }, 2000)
 
@@ -1343,11 +1345,26 @@ export default function GravitySandbox() {
   )
 
   const share = useCallback(() => {
-    window.location.hash = encodeBodies(bodiesRef.current)
-    navigator.clipboard.writeText(window.location.href).then(() => {
-      setShareCopied(true)
-      setTimeout(() => setShareCopied(false), 2000)
-    }).catch(() => {})
+    window.location.hash = encodeScene(bodiesRef.current, speedRef.current)
+    const url = window.location.href
+    const copyToClipboard = () => {
+      navigator.clipboard?.writeText(url).then(() => {
+        setShareCopied(true)
+        setTimeout(() => setShareCopied(false), 2000)
+      }).catch(() => {})
+    }
+    if (navigator.share) {
+      // The OS share sheet gives its own confirmation UI, so only fall back to
+      // the clipboard badge if sharing wasn't actually completed by the user
+      // (e.g. the API throws because no share target is available) — not on
+      // an intentional cancel, which also rejects as AbortError.
+      navigator.share({ title: 'Gravity Sandbox', url }).catch((err: unknown) => {
+        if (err instanceof Error && err.name === 'AbortError') return
+        copyToClipboard()
+      })
+      return
+    }
+    copyToClipboard()
   }, [])
 
   // ── Zoom controls ──────────────────────────────────────────────────────────

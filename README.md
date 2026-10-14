@@ -105,7 +105,7 @@ src/
 | Pan | Middle-mouse drag |
 | Hover info | Mouse over any body — shows type, mass, speed |
 | Pause / resume | Toolbar button |
-| Share | Encodes all bodies into the URL hash, copies link to clipboard |
+| Share | Encodes bodies + speed into the URL hash, opens the native share sheet where supported, otherwise copies the link to clipboard |
 
 ## Viewport
 
