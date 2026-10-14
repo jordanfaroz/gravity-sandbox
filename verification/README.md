@@ -64,6 +64,7 @@ for trusting the results:
 | `phase4-verify.mjs` | 4 (safe-area insets, rotation) | Every control stays ≥48×48 and the dead zone tracks it under 3 simulated inset profiles; rotation preserves world-space centre and body positions to <1e-9; portrait controls stay on-screen | `node verification/phase4-verify.mjs http://localhost:4190` |
 | `p4c-verify.mjs` | 4c/4d (back precedence, narrow width, preset accuracy, double-click) | Sheet-over-editor Escape precedence unwinds one layer at a time; body type reachable via sheet at 360px; preset type/pinned breakdown matches `presets.ts` source; double-click engages follow without opening the editor while touch is unaffected | `node verification/p4c-verify.mjs http://localhost:4190` |
 | `share-verify.mjs` | web-first (share a scene) | Share round-trips bodies + speed through the URL hash; five classes of malformed/hostile hash (invalid base64, invalid JSON, non-array body list, NaN fields, 5000-body payload) all fail to decode cleanly without crashing the page or throwing a console error | `node verification/share-verify.mjs http://localhost:4190` |
+| `snapshot-verify.mjs` | web-first (snapshot & clip) | "Save image" downloads a non-empty PNG; "Record 10s clip" shows a recording state, waits out the full 10s, and downloads a non-empty WebM | `node verification/snapshot-verify.mjs http://localhost:4190` |
 
 Each harness prints `PASS`/`FAIL` per check and a summary line; a nonzero
 exit isn't wired up, so read the summary count, don't just check the exit

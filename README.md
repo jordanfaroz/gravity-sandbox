@@ -106,6 +106,8 @@ src/
 | Hover info | Mouse over any body — shows type, mass, speed |
 | Pause / resume | Toolbar button |
 | Share | Encodes bodies + speed into the URL hash, opens the native share sheet where supported, otherwise copies the link to clipboard |
+| Save image | Downloads the current canvas as a PNG |
+| Record 10s clip | Downloads a 10-second WebM recording of the canvas (hidden if the browser doesn't support `canvas.captureStream`) |
 
 ## Viewport
 

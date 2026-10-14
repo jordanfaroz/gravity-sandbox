@@ -13,6 +13,10 @@ export interface SettingsProps {
   onSetSpeed: (v: number) => void
   onReset: () => void
   onShare: () => void
+  onSaveImage: () => void
+  onRecordClip: () => void
+  canRecord: boolean
+  recordSecondsLeft: number
   bodyCount: number
 }
 
@@ -200,8 +204,10 @@ export default function Toolbar({
 
 /** Rows for the settings sheet. Kept here so the sheet content lives with the bar. */
 export function SettingsSheetBody({
-  G, onSetG, speed, onSetSpeed, onReset, onShare, bodyCount,
+  G, onSetG, speed, onSetSpeed, onReset, onShare,
+  onSaveImage, onRecordClip, canRecord, recordSecondsLeft, bodyCount,
 }: SettingsProps) {
+  const isRecording = recordSecondsLeft > 0
   return (
     <div className="flex flex-col gap-3 p-2">
       <div>
@@ -230,6 +236,18 @@ export function SettingsSheetBody({
       <div className="flex gap-2">
         <button onClick={onReset} className={`${BTN} flex-1 px-4 ${BTN_IDLE}`}>Reset</button>
         <button onClick={onShare} className={`${BTN} flex-1 px-4 ${BTN_IDLE}`}>Share</button>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={onSaveImage} className={`${BTN} flex-1 px-4 ${BTN_IDLE}`}>Save image</button>
+        {canRecord && (
+          <button
+            onClick={onRecordClip}
+            disabled={isRecording}
+            className={`${BTN} flex-1 px-4 ${isRecording ? 'bg-red-500/80 border border-red-300 text-white' : BTN_IDLE}`}
+          >
+            {isRecording ? `Recording… ${recordSecondsLeft}s` : 'Record 10s clip'}
+          </button>
+        )}
       </div>
       <div className="text-white/35 text-xs text-center">
         {bodyCount} {bodyCount === 1 ? 'body' : 'bodies'} in the simulation

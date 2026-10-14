@@ -16,3 +16,15 @@ export function cn(...inputs: ClassValue[]) {
 export const newId = (): string =>
   globalThis.crypto?.randomUUID?.() ??
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
+/** Triggers a browser download for an in-memory blob (PNG snapshot, WebM clip). */
+export function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}

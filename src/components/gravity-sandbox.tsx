@@ -13,7 +13,7 @@ import {
 } from '@/lib/gestures'
 import { encodeScene, decodeScene } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
-import { newId } from '@/lib/utils'
+import { newId, downloadBlob } from '@/lib/utils'
 import Toolbar, { SheetName, SettingsSheetBody, BODY_TYPES, PRESET_LIST } from './toolbar'
 import Sheet from './sheet'
 import BodyTooltip from './body-tooltip'
@@ -107,6 +107,11 @@ export default function GravitySandbox() {
   const [bodyCount, setBodyCount] = useState(0)
   const [shareCopied, setShareCopied] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  // False until the client-only capability check below runs, so server and
+  // client agree on the first render (MediaRecorder doesn't exist in Node).
+  const [canRecord, setCanRecord] = useState(false)
+  const [recordSecondsLeft, setRecordSecondsLeft] = useState(0)
+  const isRecordingRef = useRef(false)
   const [zoom, setZoom] = useState(1)
   const [cursor, setCursor] = useState<string>('crosshair')
   const [isRewinding, setIsRewinding] = useState(false)
@@ -117,6 +122,11 @@ export default function GravitySandbox() {
   const [followedId, setFollowedId] = useState<string | null>(null)
   const [openSheet, setOpenSheet] = useState<SheetName | null>(null)
   useEffect(() => { interactionModeRef.current = interactionMode }, [interactionMode])
+
+  useEffect(() => {
+    const supported = typeof MediaRecorder !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype
+    queueMicrotask(() => setCanRecord(supported))
+  }, [])
 
   const [eventBus] = useState(createEventBus)
   const pointerKind = usePointerKind()
@@ -1367,6 +1377,53 @@ export default function GravitySandbox() {
     copyToClipboard()
   }, [])
 
+  const saveImage = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    canvas.toBlob(blob => {
+      if (!blob) return
+      downloadBlob(blob, `gravity-sandbox-${Date.now()}.png`)
+    }, 'image/png')
+  }, [])
+
+  const recordClip = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas || isRecordingRef.current) return
+    const stream = (canvas as HTMLCanvasElement & { captureStream: (fps?: number) => MediaStream }).captureStream(30)
+    let recorder: MediaRecorder
+    try {
+      recorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm',
+      })
+    } catch {
+      // Codec combination unsupported on this browser — canRecord already
+      // hides the button in the common case, this is just extra safety.
+      stream.getTracks().forEach(t => t.stop())
+      return
+    }
+
+    const chunks: Blob[] = []
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+    recorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop())
+      isRecordingRef.current = false
+      setRecordSecondsLeft(0)
+      downloadBlob(new Blob(chunks, { type: 'video/webm' }), `gravity-sandbox-clip-${Date.now()}.webm`)
+    }
+
+    isRecordingRef.current = true
+    setRecordSecondsLeft(10)
+    recorder.start()
+
+    const countdown = setInterval(() => {
+      setRecordSecondsLeft(s => (s <= 1 ? 0 : s - 1))
+    }, 1000)
+    setTimeout(() => {
+      clearInterval(countdown)
+      recorder.stop()
+    }, 10000)
+  }, [])
+
   // ── Zoom controls ──────────────────────────────────────────────────────────
 
   // Zoom about the centre of the canvas in CSS pixels.
@@ -1600,6 +1657,8 @@ export default function GravitySandbox() {
             G={G} onSetG={setG}
             speed={speed} onSetSpeed={setSpeed}
             onReset={reset} onShare={share}
+            onSaveImage={saveImage} onRecordClip={recordClip}
+            canRecord={canRecord} recordSecondsLeft={recordSecondsLeft}
             bodyCount={bodyCount}
           />
         </Sheet>
