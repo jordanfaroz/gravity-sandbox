@@ -1433,6 +1433,7 @@ export default function GravitySandbox() {
 
   const share = useCallback(() => {
     window.location.hash = encodeScene(bodiesRef.current, speedRef.current)
+    eventBus.emit({ type: 'sceneShared' })
     const url = window.location.href
     const copyToClipboard = () => {
       navigator.clipboard?.writeText(url).then(() => {
@@ -1452,7 +1453,7 @@ export default function GravitySandbox() {
       return
     }
     copyToClipboard()
-  }, [])
+  }, [eventBus])
 
   const saveImage = useCallback(() => {
     const canvas = canvasRef.current

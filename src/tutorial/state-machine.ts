@@ -3,9 +3,10 @@
  * is a plain reducer call, so it's directly unit-testable.
  *
  * Steps: 0 welcome, 1 summon star, 2 planet orbit, 3 control time, 4 move around,
- * 5 black hole, 6 presets, 7 done. "Step X of 7" in the UI covers 1..7.
+ * 5 black hole, 6 presets, 7 share, 8 done. "Step X of LAST_STEP" in the UI
+ * covers 1..LAST_STEP.
  */
-export const LAST_STEP = 7
+export const LAST_STEP = 8
 export const ORBIT_STEP = 2
 export const MAX_ORBIT_ATTEMPTS_BEFORE_SHOW_ME = 2
 

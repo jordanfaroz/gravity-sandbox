@@ -18,6 +18,7 @@ export type TutorialEvent =
   | { type: 'cameraMoved' }
   | { type: 'presetsOpened' }
   | { type: 'presetLoaded'; name: string }
+  | { type: 'sceneShared' }
 
 type Listener = (e: TutorialEvent) => void
 

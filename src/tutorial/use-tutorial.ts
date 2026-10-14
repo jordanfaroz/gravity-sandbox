@@ -154,6 +154,9 @@ export function useTutorial({
         case 'presetLoaded':
           if (state.stepIndex === 6) dispatch({ type: 'ADVANCE' })
           break
+        case 'sceneShared':
+          if (state.stepIndex === 7) dispatch({ type: 'ADVANCE' })
+          break
         default:
           break
       }

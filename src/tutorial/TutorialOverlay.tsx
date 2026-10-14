@@ -59,6 +59,15 @@ export default function TutorialOverlay({
     onOpenSheet('bodyType')
   }, [active, stepIndex, toolType, selectedType, onOpenSheet])
 
+  // Share lives inside the settings sheet, unlike the standalone toolbar
+  // buttons the other steps spotlight — nudge it open so there's something to
+  // spotlight at all. Same "nudge once, don't re-force if closed" pattern as
+  // the body-type sheet above.
+  useEffect(() => {
+    if (!active || stepIndex !== 7) return
+    onOpenSheet('settings')
+  }, [active, stepIndex, onOpenSheet])
+
   // Track the spotlighted element every frame: resize, orientation change, sheet
   // open/close, and scroll can all move it, and none of those alone is a reliable
   // single signal to re-measure on.
@@ -252,10 +261,10 @@ export default function TutorialOverlay({
           </>
         )}
 
-        {stepIndex >= 1 && stepIndex <= 6 && content && (
+        {stepIndex >= 1 && stepIndex <= 7 && content && (
           <>
             <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">
-              Step {stepIndex} of 7
+              Step {stepIndex} of {LAST_STEP}
             </div>
             <h2 className="font-semibold text-sm mb-1.5">{content.title}</h2>
             <p className="text-white/75 text-xs leading-relaxed">{content.body(pointerKind)}</p>

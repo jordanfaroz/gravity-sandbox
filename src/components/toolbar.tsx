@@ -237,7 +237,7 @@ export function SettingsSheetBody({
       </div>
       <div className="flex gap-2">
         <button onClick={onReset} className={`${BTN} flex-1 px-4 ${BTN_IDLE}`}>Reset</button>
-        <button onClick={onShare} className={`${BTN} flex-1 px-4 ${BTN_IDLE}`}>Share</button>
+        <button data-tutorial="share" onClick={onShare} className={`${BTN} flex-1 px-4 ${BTN_IDLE}`}>Share</button>
       </div>
       <div className="flex gap-2">
         <button onClick={onSaveImage} className={`${BTN} flex-1 px-4 ${BTN_IDLE}`}>Save image</button>

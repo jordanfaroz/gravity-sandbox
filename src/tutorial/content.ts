@@ -46,6 +46,12 @@ export const STEP_CONTENT: Record<number, StepContent> = {
     body: () => 'Load a preset system from here.',
     target: 'presets',
   },
+  7: {
+    title: 'Share your first system',
+    body: () => 'Share encodes everything — bodies, masses, orbits, speed — into a link. Paste it anywhere to restore it exactly.',
+    target: 'share',
+    allowManualNext: true,
+  },
 }
 
 export const ORBIT_HINT_TEXT: Record<'merged' | 'escaped' | 'tap', string> = {
