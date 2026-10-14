@@ -20,6 +20,10 @@ createServer(async (req, res) => {
     res.writeHead(200, {
       'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream',
       'Cache-Control': 'no-store',
+      // Mirrors the production header set in vercel.json (Next's own headers()
+      // config isn't available under output: 'export'), so embed-mode CSP
+      // behaviour can be verified against this local server too.
+      'Content-Security-Policy': "frame-ancestors 'self' https://jordworld.com https://*.jordworld.com",
     })
     res.end(data)
   } catch {

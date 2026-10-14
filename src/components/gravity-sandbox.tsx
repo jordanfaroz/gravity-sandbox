@@ -15,7 +15,7 @@ import { encodeScene, decodeScene } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import { newId, downloadBlob } from '@/lib/utils'
 import { SavedScene, loadScenes, saveScene, deleteScene } from '@/lib/my-scenes'
-import Toolbar, { SheetName, SettingsSheetBody, MyScenesSection, BODY_TYPES, PRESET_LIST } from './toolbar'
+import Toolbar, { SheetName, SettingsSheetBody, MyScenesSection, EmbedToolbar, BODY_TYPES, PRESET_LIST } from './toolbar'
 import Sheet from './sheet'
 import BodyTooltip from './body-tooltip'
 import HelpModal from './help-modal'
@@ -131,6 +131,9 @@ export default function GravitySandbox() {
   const [myScenes, setMyScenes] = useState<SavedScene[]>([])
   const [newSceneName, setNewSceneName] = useState('')
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // False until the mount effect below reads the query string (unavailable
+  // during the server-side prerender).
+  const [isEmbed, setIsEmbed] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [cursor, setCursor] = useState<string>('crosshair')
   const [isRewinding, setIsRewinding] = useState(false)
@@ -145,9 +148,11 @@ export default function GravitySandbox() {
   useEffect(() => {
     const supported = typeof MediaRecorder !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype
     const scenes = loadScenes()
+    const embedded = new URLSearchParams(window.location.search).get('embed') === '1'
     queueMicrotask(() => {
       setCanRecord(supported)
       setMyScenes(scenes)
+      setIsEmbed(embedded)
     })
   }, [])
 
@@ -1387,13 +1392,15 @@ export default function GravitySandbox() {
           toggleFullscreen()
           break
         case '?':
-          setShowHelp(true)
+          // The help overlay is chrome, same as the toolbar it's hidden
+          // alongside in embed mode.
+          if (!isEmbed) setShowHelp(true)
           break
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [pause, resume, setSpeed, toggleFullscreen])
+  }, [pause, resume, setSpeed, toggleFullscreen, isEmbed])
 
   const loadPreset = useCallback(
     (name: PresetName) => {
@@ -1687,30 +1694,33 @@ export default function GravitySandbox() {
         onDoubleClick={handleDoubleClick}
       />
 
-      {/* Top-right: share badge + help button (stacked, no overlap) */}
-      <div data-control-layer="top" className="absolute flex flex-col items-end gap-2 z-10 pointer-events-none" style={{ top: 'calc(1rem + env(safe-area-inset-top))', right: 'calc(1rem + env(safe-area-inset-right))' }}>
-        {shareCopied && (
-          <div className="bg-green-600/90 text-white text-xs px-4 py-2 rounded-full backdrop-blur-sm border border-green-400/30 whitespace-nowrap">
-            URL copied to clipboard!
+      {/* Top-right: share badge + help button (stacked, no overlap). Hidden in
+          embed mode, which shows only the minimal toolbar below. */}
+      {!isEmbed && (
+        <div data-control-layer="top" className="absolute flex flex-col items-end gap-2 z-10 pointer-events-none" style={{ top: 'calc(1rem + env(safe-area-inset-top))', right: 'calc(1rem + env(safe-area-inset-right))' }}>
+          {shareCopied && (
+            <div className="bg-green-600/90 text-white text-xs px-4 py-2 rounded-full backdrop-blur-sm border border-green-400/30 whitespace-nowrap">
+              URL copied to clipboard!
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
+              className="pointer-events-auto flex items-center justify-center min-h-[48px] min-w-[48px] bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors select-none"
+            >
+              {isFullscreen ? '⤡' : '⤢'}
+            </button>
+            <button
+              onClick={() => setShowHelp(true)}
+              className="pointer-events-auto flex items-center justify-center gap-1.5 min-h-[48px] px-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors text-xs font-medium select-none"
+            >
+              ? Help
+            </button>
           </div>
-        )}
-        <div className="flex gap-2">
-          <button
-            onClick={toggleFullscreen}
-            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-            title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
-            className="pointer-events-auto flex items-center justify-center min-h-[48px] min-w-[48px] bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors select-none"
-          >
-            {isFullscreen ? '⤡' : '⤢'}
-          </button>
-          <button
-            onClick={() => setShowHelp(true)}
-            className="pointer-events-auto flex items-center justify-center gap-1.5 min-h-[48px] px-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors text-xs font-medium select-none"
-          >
-            ? Help
-          </button>
         </div>
-      </div>
+      )}
 
       {showHelp && (
         <HelpModal onClose={() => setShowHelp(false)} onReplayTutorial={() => { setShowHelp(false); tutorial.requestStart() }} />
@@ -1859,22 +1869,31 @@ export default function GravitySandbox() {
         <BodyTooltip body={hoveredBody} x={tooltipPos.x} y={tooltipPos.y} />
       )}
 
-      <Toolbar
-        selectedType={selectedType}
-        onSelectType={setSelectedType}
-        isRunning={isRunning}
-        onPause={pause}
-        onResume={resume}
-        onLoadPreset={loadPreset}
-        bodyCount={bodyCount}
-        mode={interactionMode}
-        onSetMode={setInteractionMode}
-        openSheet={openSheet}
-        onOpenSheet={openSheetFromToolbar}
-        isRewinding={isRewinding}
-        onRewindStart={startRewind}
-        onRewindStop={stopRewind}
-      />
+      {isEmbed ? (
+        <EmbedToolbar
+          isRunning={isRunning}
+          onPause={pause}
+          onResume={resume}
+          fullSandboxHref={`${window.location.pathname}${window.location.hash}`}
+        />
+      ) : (
+        <Toolbar
+          selectedType={selectedType}
+          onSelectType={setSelectedType}
+          isRunning={isRunning}
+          onPause={pause}
+          onResume={resume}
+          onLoadPreset={loadPreset}
+          bodyCount={bodyCount}
+          mode={interactionMode}
+          onSetMode={setInteractionMode}
+          openSheet={openSheet}
+          onOpenSheet={openSheetFromToolbar}
+          isRewinding={isRewinding}
+          onRewindStart={startRewind}
+          onRewindStop={stopRewind}
+        />
+      )}
 
       {tutorial.clutterPrompt && <ClutterPrompt onResolve={tutorial.resolveClutter} />}
 

@@ -324,3 +324,45 @@ export function MyScenesSection({
     </div>
   )
 }
+
+export interface EmbedToolbarProps {
+  isRunning: boolean
+  onPause: () => void
+  onResume: () => void
+  fullSandboxHref: string
+}
+
+/** Minimal chrome shown in place of the full Toolbar when `?embed=1`. */
+export function EmbedToolbar({ isRunning, onPause, onResume, fullSandboxHref }: EmbedToolbarProps) {
+  return (
+    <div
+      data-control-layer="bottom"
+      className="absolute bottom-0 left-0 right-0 flex justify-center pointer-events-none"
+      style={{
+        paddingLeft: 'calc(0.5rem + env(safe-area-inset-left))',
+        paddingRight: 'calc(0.5rem + env(safe-area-inset-right))',
+        paddingTop: '0.5rem',
+        paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))',
+      }}
+    >
+      <div className="flex items-center gap-1 pointer-events-auto">
+        <button
+          onClick={isRunning ? onPause : onResume}
+          title={isRunning ? 'Pause' : 'Play'}
+          aria-label={isRunning ? 'Pause' : 'Play'}
+          className={`${BTN} px-3 ${BTN_IDLE}`}
+        >
+          {isRunning ? '⏸' : '▶'}
+        </button>
+        <a
+          href={fullSandboxHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`${BTN} px-4 gap-1.5 ${BTN_IDLE}`}
+        >
+          Open full sandbox ↗
+        </a>
+      </div>
+    </div>
+  )
+}

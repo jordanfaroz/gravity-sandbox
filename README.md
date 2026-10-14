@@ -123,6 +123,10 @@ src/
 
 The full simulation state is encoded as a compact base64 string in `window.location.hash`. Trails and runtime IDs are stripped — only position, velocity, mass, radius, color, and type are saved. Pasting the URL exactly restores the simulation at that moment.
 
+## Embed mode
+
+`?embed=1` hides everything except a minimal toolbar (play/pause + "Open full sandbox") and skips the onboarding tutorial — meant for iframing into another page. Iframing is restricted to jordworld.com via a `Content-Security-Policy: frame-ancestors` header set in `vercel.json` (Next's own `headers()` config isn't available under `output: 'export'`, so this has to be a host-level header instead).
+
 ## Stack
 
 - **Next.js 16** (App Router, Turbopack)

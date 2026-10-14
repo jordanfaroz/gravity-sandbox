@@ -107,9 +107,12 @@ export function useTutorial({
   useEffect(() => {
     const url = new URL(window.location.href)
     const forced = url.searchParams.get('tutorial') === '1'
+    // Embeds are a lightweight preview, not the full onboarding experience —
+    // a full-screen tutorial overlay inside someone else's iframe is a bad look.
+    const embedded = url.searchParams.get('embed') === '1'
     const stored = readStorage(TUTORIAL_STORAGE_KEY)
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (shouldAutoStart(stored, forced)) requestStart()
+    if (!embedded && shouldAutoStart(stored, forced)) requestStart()
     // Intentionally mount-only: re-running this on every requestStart identity
     // change would re-trigger the auto-show check pointlessly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
