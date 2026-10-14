@@ -7,7 +7,7 @@ const port = Number(process.argv[3] ?? 4190)
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
-  '.png': 'image/png', '.txt': 'text/plain',
+  '.png': 'image/png', '.txt': 'text/plain', '.webmanifest': 'application/manifest+json',
 }
 
 createServer(async (req, res) => {

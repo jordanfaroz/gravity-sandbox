@@ -66,6 +66,7 @@ for trusting the results:
 | `share-verify.mjs` | web-first (share a scene) | Share round-trips bodies + speed through the URL hash; five classes of malformed/hostile hash (invalid base64, invalid JSON, non-array body list, NaN fields, 5000-body payload) all fail to decode cleanly without crashing the page or throwing a console error | `node verification/share-verify.mjs http://localhost:4190` |
 | `snapshot-verify.mjs` | web-first (snapshot & clip) | "Save image" downloads a non-empty PNG; "Record 10s clip" shows a recording state, waits out the full 10s, and downloads a non-empty WebM | `node verification/snapshot-verify.mjs http://localhost:4190` |
 | `my-scenes-verify.mjs` | web-first (my scenes) | Save/load/delete named scenes with a thumbnail, round-tripping through `localStorage` and surviving a real page reload | `node verification/my-scenes-verify.mjs http://localhost:4190` |
+| `pwa-verify.mjs` | web-first (installable PWA) | Manifest is linked and valid (standalone display, 512×512 + maskable icons); the service worker reaches `activated`; a reload while offline still renders the canvas; a shared-scene link still restores correctly with the service worker installed | `node verification/pwa-verify.mjs http://localhost:4190` |
 
 Each harness prints `PASS`/`FAIL` per check and a summary line; a nonzero
 exit isn't wired up, so read the summary count, don't just check the exit
