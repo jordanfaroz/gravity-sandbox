@@ -1819,6 +1819,14 @@ export default function GravitySandbox() {
       <div data-control-layer="top" className="absolute pointer-events-none select-none" style={{ top: 'calc(1rem + env(safe-area-inset-top))', left: 'calc(1rem + env(safe-area-inset-left))' }}>
         <p className="text-white/70 text-sm font-semibold tracking-wide">N-Body Gravity Sandbox</p>
         <p className="text-white/30 text-[11px]">Velocity Verlet · Newton&apos;s Law</p>
+        <a
+          href="https://jordworld.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="pointer-events-auto inline-block text-white/25 hover:text-white/60 text-[11px] mt-0.5 transition-colors"
+        >
+          Part of Jord World ↗
+        </a>
       </div>
 
       {/* Zoom controls — centered at top */}
