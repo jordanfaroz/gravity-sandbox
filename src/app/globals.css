@@ -46,6 +46,60 @@ body {
   overscroll-behavior: none;
 }
 
+/*
+  100vh is the LARGEST possible mobile viewport — the one with the browser's
+  own UI (address bar, tab strip) hidden. 100dvh tracks the CURRENT one and
+  shrinks when that UI is showing. The app shell (and the bottom sheet's max
+  height, below) were sized off the vh unit, so on a phone with its chrome
+  visible they were taller than the actually-visible area — bottom-anchored
+  controls (the toolbar, the sheet's own content) could render below the
+  fold with nothing to scroll them into view. This is the industry-standard
+  mobile Safari/Chrome "100vh" bug; dvh is the fix.
+
+  The vh declaration is a fallback for browsers without dvh support, behind
+  an @supports feature query rather than a second same-property declaration
+  in the same rule: Next's production build minifies CSS with Lightning
+  CSS, which treats two values for one property in one rule as plain
+  redundancy and collapses them down to the last one — dropping the vh
+  fallback entirely, the opposite of what's needed here. A real feature
+  query survives minification, since collapsing across it would change
+  behaviour for browsers that don't match it. Also can't be done as two
+  keys in a React inline `style` object either way — a plain JS object has
+  one `height` key, not a cascade — hence real CSS classes here instead of
+  the inline styles these replaced.
+*/
+.app-shell-height {
+  height: 100vh;
+}
+@supports (height: 100dvh) {
+  .app-shell-height {
+    height: 100dvh;
+  }
+}
+
+.sheet-max-height {
+  max-height: 80vh;
+}
+@supports (height: 100dvh) {
+  .sheet-max-height {
+    max-height: 80dvh;
+  }
+}
+
+/* Lets a control row scroll horizontally without showing a scrollbar across
+   it — used as a safety net under the toolbar's own content (see
+   toolbar.tsx): every button already collapses or hides at specific
+   breakpoints so this should never need to engage above ~320px wide, but if
+   a future addition (or a narrower device than tested) ever doesn't fit,
+   this keeps every control reachable by a swipe instead of clipping it. */
+.scrollbar-hide {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/newer Edge */
+}
+
 canvas {
   touch-action: none;
   user-select: none;

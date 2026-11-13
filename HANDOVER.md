@@ -47,6 +47,36 @@ its own memory file: read the actual code before writing a test against it.
 A duplicate Escape-key listener was found this way, before a test would have
 been written against the wrong assumption about ownership.
 
+3. **The dvh/vh fallback must be an `@supports` block, not a second
+   declaration in the same rule.** `.app-shell-height` and `.sheet-max-height`
+   in `globals.css` each declare `height`/`max-height` once in a plain rule
+   (the `vh` value) and again inside `@supports (height: 100dvh)` (the `dvh`
+   value) — not as two `height:` lines back to back in one rule, which reads
+   like the more obvious way to write a fallback. It isn't: Next's production
+   build minifies CSS with Lightning CSS, which treats two values for one
+   property in one rule as plain redundancy and collapses them down to the
+   *last* one, silently deleting the `vh` fallback from the shipped CSS.
+   Confirmed by grepping the built output in `out/_next/static/chunks/*.css`
+   — the two-declaration form really does ship as dvh-only. The `@supports`
+   form survives, because collapsing across a feature query would change
+   behaviour for browsers that don't match it. This is also why it's real
+   CSS classes rather than a React inline `style` object: a plain JS object
+   has one `height` key, not a cascade, so neither form works there at all.
+
+   Related limitation, for whoever next touches this: headless/CDP-driven
+   Chromium has no real browser chrome to show or hide, so
+   `window.innerHeight`, `100vh`, and `100dvh` are always identical in
+   Playwright — there is no way to make the layout and visual viewports
+   diverge the way a real phone's address bar does. A pre-fix and post-fix
+   screenshot of the mobile toolbar at any viewport size are byte-identical
+   (checked with `png-diff.mjs`) for exactly this reason; `npm run lint` /
+   `tsc --noEmit` / `npm run build` all passing and
+   `verification/toolbar-visibility-verify.mjs` passing prove the layout is
+   internally consistent at every tested size, not that the vh→dvh swap
+   itself does anything visible to this tooling. That part needs an
+   on-device recheck — the same caveat `phase4-verify.mjs` already carries
+   for `env(safe-area-inset-*)` resolving to 0 in desktop Chromium.
+
 ## Where the verification harnesses live
 
 `verification/` at the repo root — scripts plus a README covering, per

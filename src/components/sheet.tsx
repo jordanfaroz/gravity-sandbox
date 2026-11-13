@@ -31,9 +31,8 @@ export default function Sheet({ title, onClose, children }: Props) {
 
       <div
         data-sheet={title}
-        className="relative w-full max-w-2xl mx-auto bg-[#0f0f1e] border-t border-white/15 rounded-t-2xl shadow-2xl flex flex-col"
+        className="relative w-full max-w-2xl mx-auto bg-[#0f0f1e] border-t border-white/15 rounded-t-2xl shadow-2xl flex flex-col sheet-max-height"
         style={{
-          maxHeight: '80vh',
           paddingBottom: 'env(safe-area-inset-bottom)',
           marginLeft: 'env(safe-area-inset-left)',
           marginRight: 'env(safe-area-inset-right)',

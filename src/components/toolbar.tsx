@@ -112,7 +112,15 @@ export default function Toolbar({
         paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))',
       }}
     >
-      <div className="flex items-center gap-1 pointer-events-auto">
+      {/*
+        overflow-x-auto + scrollbar-hide: a safety net, not the primary fix for
+        anything currently reachable — every button here already collapses or
+        hides at a specific breakpoint (see each one below) specifically so this
+        row fits without scrolling at every tested width. If a future addition
+        (or a device narrower than tested) ever doesn't fit, this keeps every
+        control reachable by a swipe instead of silently clipping it.
+      */}
+      <div className="flex items-center gap-1 pointer-events-auto overflow-x-auto scrollbar-hide max-w-full [&>*]:shrink-0">
         {/*
           Hold to rewind. Stops on every release path: pointerup, pointercancel,
           pointerleave and lostpointercapture. Capture is taken on pointerdown so

@@ -1704,7 +1704,7 @@ export default function GravitySandbox() {
   }, [handleBack])
 
   return (
-    <div className="relative w-full h-screen overflow-hidden" style={{ background: '#0a0a0f' }}>
+    <div className="relative w-full app-shell-height overflow-hidden" style={{ background: '#0a0a0f' }}>
       <canvas
         ref={canvasRef}
         // w-full h-full gives the canvas an explicit CSS size. Without it the

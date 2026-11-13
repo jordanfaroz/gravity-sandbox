@@ -72,10 +72,13 @@ for trusting the results:
 | `overflow-verify.mjs` | web-first (responsive pass) | No horizontal overflow (`document.documentElement.scrollWidth <= clientWidth`) at 375/768/1440px | `node verification/overflow-verify.mjs http://localhost:4190` |
 | `tutorial-e2e-verify.mjs` | web-first (final tutorial step) | Full click-through of all 8 tutorial steps (star, orbit via "Show me", rewind, zoom, black-hole skip, a preset, and the new share step via the real Share button), ending with `completed` in storage and no overflow/console errors — pass a width as the second arg (`node verification/tutorial-e2e-verify.mjs http://localhost:4190 375`) | `node verification/tutorial-e2e-verify.mjs http://localhost:4190 1440` |
 | `panel-verify.mjs` | web-first (desktop side panel) | This suite's standard 1280px test width still gets the mobile bottom bar (regression guard); ≥1366px gets the panel instead, expanded by default; collapse/expand via its toggle and the `[` shortcut persist to `localStorage` and survive a reload; the collapsed toggle is never hidden behind the Help/Fullscreen cluster; panel controls still spawn bodies | `node verification/panel-verify.mjs http://localhost:4190` |
+| `toolbar-visibility-verify.mjs` | fix-mobile-toolbar (dvh fix) | The toolbar and its Presets/planet-picker controls are on-screen and ≥44×44 at 5 phone profiles (iPhone SE/12-14/15 Pro Max, small Android, Pixel 7) × portrait + landscape, plus 2 "browser chrome expanded" shorter-viewport proxies — 52 checks, exits nonzero on failure (unlike most of the table above). Both branches of the <400px body-type-button breakpoint are checked on every profile, not just whichever one a given width happens to land on (paired-negative-assertion rule) | `node verification/toolbar-visibility-verify.mjs http://localhost:4190` |
+| `repro-toolbar.mjs` | fix-mobile-toolbar (dvh fix) | Same device/orientation matrix as above, as a screenshot+evidence dump rather than pass/fail — this is what produced the before/after screenshots for that bug's report. Read the limitation comment at the top of the file before trusting a clean run here as proof the bug is fixed: headless Chromium has no real browser chrome to show or hide, so it cannot make `window.innerHeight`/`100vh`/`100dvh` diverge the way a real phone's address bar does, and a pre-fix and post-fix run of this script produce byte-identical screenshots (verified with `png-diff.mjs`) for exactly that reason. It proves the layout is internally consistent at every requested size, not that the fix changed anything visible to this tooling — the dvh/vh distinction itself needs an on-device recheck | `node verification/repro-toolbar.mjs http://localhost:4190 <outDir>` |
 
 Each harness prints `PASS`/`FAIL` per check and a summary line; a nonzero
-exit isn't wired up, so read the summary count, don't just check the exit
-code.
+exit isn't wired up for most of these, so read the summary count, don't just
+check the exit code — `toolbar-visibility-verify.mjs` is an exception and
+does exit nonzero on any failure.
 
 ## Pure-logic unit tests (no browser, no static server)
 
