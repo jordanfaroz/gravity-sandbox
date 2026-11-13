@@ -43,7 +43,7 @@ const tapBody = async () => {
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1000)
 await page.getByRole('button', { name: 'Pause' }).click()
-await page.getByRole('button', { name: 'Presets' }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
 await frames()
 
 // ── Touch target sizes ──────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ await frames()
 // Note: a spawn drag STARTED on the canvas closes the editor (startSpawn clears
 // it), so a drag can never be released over an open panel. The real risk is the
 // opposite: a press landing on the panel leaking through to the canvas.
-await page.getByRole('button', { name: 'Presets' }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
 await frames()
 await tapBody()
 check('editor open for panel checks', await editorOpen(), true)

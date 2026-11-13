@@ -20,7 +20,7 @@ const canvasInfo = await page.evaluate(() => {
 
 // Load a preset (Solar System) so there are bodies to simulate. Presets moved
 // into a sheet in Phase 4b, after this script was written — open it first.
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByRole('button', { name: 'Solar System' }).click()
 await page.waitForTimeout(300)
 

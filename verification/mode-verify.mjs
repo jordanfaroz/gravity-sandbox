@@ -39,7 +39,7 @@ const modeOf = () => page.evaluate(() => {
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1000)
 await page.getByRole('button', { name: /Pause/ }).click()
-await page.getByRole('button', { name: 'Presets' }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
 await frames()
 
 // Toggle is visible, reflects state, and both segments are >= 48x48 CSS px

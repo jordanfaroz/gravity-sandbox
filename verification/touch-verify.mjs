@@ -55,7 +55,7 @@ const heaviest = async () => {
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1000)
 await page.getByRole('button', { name: /Pause/ }).click()
-await page.getByRole('button', { name: 'Presets' }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
 await frames()
 
 // ── 1. Pinch anchor stays fixed under the midpoint, zooming in and out ────────

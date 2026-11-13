@@ -19,7 +19,7 @@ function check(name, actual, expected) {
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(500)
 await page.getByRole('button', { name: /Pause/ }).click()
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByRole('button', { name: /Solar System/ }).first().click()
 
 await page.getByRole('button', { name: 'Settings', exact: true }).click()

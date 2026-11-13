@@ -35,7 +35,7 @@ await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1000)
 
 // ── Presets sheet: opens, loads, and dismisses three ways ──────────────────
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await frames()
 check('presets sheet opens', await sheetOpen('Presets'), true)
 check('all 11 presets listed', await page.getByRole('button', { name: /Binary Stars|Solar System|Figure-8|Slingshot|Black Hole Field|Galaxy Collision|3-Body Chaos|Trojans|Rogue Star|Double Binary|Pulsar/ }).count(), 11)
@@ -51,7 +51,7 @@ check('choosing a preset loads it and closes the sheet', await sheetOpen('Preset
 check('preset actually loaded', await count(), 6)
 
 // dismiss: close control
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await frames()
 const closeBtn = await page.getByRole('button', { name: 'Close sheet' }).boundingBox()
 check('sheet close control >= 48x48', closeBtn.width >= 48 && closeBtn.height >= 48, true)
@@ -60,14 +60,14 @@ await frames()
 check('close control dismisses', await sheetOpen('Presets'), false)
 
 // dismiss: tap outside (backdrop)
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await frames()
 await page.mouse.click(640, 80)   // well above the sheet
 await frames()
 check('tapping outside dismisses', await sheetOpen('Presets'), false)
 
 // dismiss: hardware back, ahead of the body editor
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await frames()
 const backHandled = await page.evaluate(() => {
   // handleBack is exercised through the same precedence chain the Capacitor
@@ -80,7 +80,7 @@ check('escape/back dismisses the sheet', backHandled && !(await sheetOpen('Prese
 
 // ── Sheet blocks canvas gestures while open ────────────────────────────────
 {
-  await page.getByRole('button', { name: 'Presets' }).click()
+  await page.getByRole('button', { name: 'Presets', exact: true }).click()
   await frames()
   const before = await count()
   await touch('touchStart', [{ x: 300, y: 250, id: 1 }])

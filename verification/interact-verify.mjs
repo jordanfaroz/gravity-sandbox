@@ -27,7 +27,7 @@ const followBadge = () => page.locator('text=/Following/').first().isVisible().c
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1000)
 await page.getByRole('button', { name: /Pause/ }).click()
-await page.getByRole('button', { name: 'Presets' }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
 await frames()
 
 const results = []
@@ -106,7 +106,7 @@ check('right-click deletes body', await count(), beforeDel - 1)
 // of the canvas centre. Aiming at 640 leaves the body editor's panel (drawn at
 // screenX+20) able to swallow the second click if React paints between the two —
 // pre-existing behaviour, but it makes the assertion racy.
-await page.getByRole('button', { name: 'Presets' }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
 await page.keyboard.press('Escape')
 await frames()
 await page.mouse.dblclick(620, 400)

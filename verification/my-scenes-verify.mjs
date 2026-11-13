@@ -18,13 +18,13 @@ function check(name, actual, expected) {
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(500)
 await page.getByRole('button', { name: /Pause/ }).click()
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 
 check('starts with no saved scenes', await page.getByText('No saved scenes yet').count(), 1)
 
 // ── Save ─────────────────────────────────────────────────────────────────
 await page.getByRole('button', { name: /Solar System/ }).first().click()
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByPlaceholder('Name this scene').fill('My Solar System')
 await page.getByRole('button', { name: 'Save', exact: true }).click()
 await page.waitForTimeout(200)
@@ -34,19 +34,19 @@ check('saved scene has a thumbnail image', await page.locator('img[alt=""]').cou
 // Saved scenes persist in localStorage across a real reload.
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(500)
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 check('saved scene survives a reload', await page.getByText('My Solar System').count(), 1)
 
 // ── Load ─────────────────────────────────────────────────────────────────
 await page.getByRole('button', { name: 'Binary Stars' }).click()
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByRole('button', { name: 'Load' }).click()
 await page.waitForTimeout(300)
 const hashAfterLoad = await page.evaluate(() => window.location.hash)
 check('loading a saved scene updates the URL hash', hashAfterLoad.length > 1, true)
 
 // ── Delete ───────────────────────────────────────────────────────────────
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByRole('button', { name: /Delete My Solar System/ }).click()
 await page.waitForTimeout(200)
 check('deleted scene is gone from the list', await page.getByText('My Solar System').count(), 0)

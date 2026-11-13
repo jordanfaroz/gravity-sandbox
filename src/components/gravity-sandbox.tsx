@@ -14,6 +14,7 @@ import {
 import { encodeScene, decodeScene } from '@/lib/serialize'
 import { PRESETS, PresetName } from '@/lib/presets'
 import { newId, downloadBlob } from '@/lib/utils'
+import { useVisualViewportRect } from '@/lib/use-visual-viewport'
 import { SavedScene, loadScenes, saveScene, deleteScene } from '@/lib/my-scenes'
 import Toolbar, { SheetName, SettingsSheetBody, MyScenesSection, EmbedToolbar, BODY_TYPES, PRESET_LIST, TOOL_DATA_TUTORIAL } from './toolbar'
 import DesktopPanel from './desktop-panel'
@@ -175,6 +176,7 @@ export default function GravitySandbox() {
   const [eventBus] = useState(createEventBus)
   const pointerKind = usePointerKind()
   const reducedMotion = usePrefersReducedMotion()
+  const visualViewport = useVisualViewportRect()
 
   // Canvas-local CSS coords for a mouse event, then the world point under it.
   const eventWorld = useCallback((e: { clientX: number; clientY: number }) => {
@@ -1704,7 +1706,26 @@ export default function GravitySandbox() {
   }, [handleBack])
 
   return (
-    <div className="relative w-full app-shell-height overflow-hidden" style={{ background: '#0a0a0f' }}>
+    <div
+      data-app-shell="true"
+      className="relative w-full app-shell-height overflow-hidden"
+      style={{
+        background: '#0a0a0f',
+        // JS fallback for phones where 100dvh alone doesn't track the real
+        // visible area (confirmed on a real device — see HANDOVER.md).
+        // position: fixed pins to the layout viewport's origin regardless of
+        // document scroll; top/height from visualViewport override the CSS
+        // dvh class once a real measurement lands (null until then, so SSR
+        // and unsupported browsers keep the dvh/vh fallback untouched).
+        ...(visualViewport.height !== null && {
+          position: 'fixed',
+          top: visualViewport.top,
+          left: 0,
+          right: 0,
+          height: visualViewport.height,
+        }),
+      }}
+    >
       <canvas
         ref={canvasRef}
         // w-full h-full gives the canvas an explicit CSS size. Without it the
@@ -1748,6 +1769,24 @@ export default function GravitySandbox() {
               URL copied to clipboard!
             </div>
           )}
+          {/*
+            Guaranteed-reachable fallback for the bottom toolbar's own Presets
+            button: top-anchored (safe-area-inset-top), so it stays on-screen
+            even on a device where the visualViewport fix above still leaves
+            the bottom bar cramped. Opens the same Presets sheet, which also
+            carries the body-type ("planet") picker — see the sheet below.
+          */}
+          {!isDesktop && (
+            <button
+              data-control="planets-presets-handle"
+              onClick={() => openSheetFromToolbar(openSheet === 'presets' ? null : 'presets')}
+              aria-label="Planets and presets"
+              title="Choose a planet type or load a preset"
+              className="pointer-events-auto flex items-center justify-center gap-1.5 min-h-[48px] px-4 bg-white/5 backdrop-blur-md border border-white/10 rounded-full text-white/52 hover:text-white/85 hover:bg-white/10 transition-colors text-xs font-medium select-none"
+            >
+              ☰ Planets / Presets
+            </button>
+          )}
           <div className="flex gap-2">
             <button
               onClick={toggleFullscreen}
@@ -1775,6 +1814,31 @@ export default function GravitySandbox() {
           all of this inline instead, with no need to open/close anything. */}
       {!isDesktop && openSheet === 'presets' && (
         <Sheet title="Presets" onClose={() => setOpenSheet(null)}>
+          {/*
+            Body type also lives here (duplicating the Settings sheet's copy)
+            so the top-anchored "Planets / Presets" fallback button opens one
+            sheet that actually covers both halves of its own label, rather
+            than only ever reaching presets.
+          */}
+          <div className="p-2 pb-0">
+            <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1.5">Body type</div>
+            <div className="flex gap-1.5 flex-wrap">
+              {BODY_TYPES.map(t => (
+                <button
+                  key={t.type}
+                  onClick={() => setSelectedType(t.type)}
+                  aria-pressed={selectedType === t.type}
+                  className={`min-h-[48px] px-3 rounded-xl flex items-center gap-2 text-xs font-semibold transition-colors ${
+                    selectedType === t.type ? 'bg-white/15 text-white' : 'text-white/60 hover:bg-white/10'
+                  }`}
+                >
+                  <span className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: t.color }} />
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="text-white/40 text-[10px] uppercase tracking-wider mt-3 mb-1 px-3">Presets</div>
           {PRESET_LIST.map(p => (
             <button
               key={p.name}

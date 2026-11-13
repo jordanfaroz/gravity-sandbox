@@ -24,13 +24,13 @@ check('CSP restricts frame-ancestors to self + jordworld.com', csp, "frame-ances
 // ── Normal mode: full chrome visible ──────────────────────────────────────────
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(500)
-check('normal mode shows the Presets button', await page.getByRole('button', { name: 'Presets' }).count() > 0, true)
+check('normal mode shows the Presets button', await page.getByRole('button', { name: 'Presets', exact: true }).count() > 0, true)
 check('normal mode shows the Help button', await page.getByRole('button', { name: /Help/ }).count() > 0, true)
 
 // ── Embed mode: minimal chrome only ──────────────────────────────────────────
 await page.goto(url + '?embed=1', { waitUntil: 'networkidle' })
 await page.waitForTimeout(500)
-check('embed mode hides the Presets button', await page.getByRole('button', { name: 'Presets' }).count(), 0)
+check('embed mode hides the Presets button', await page.getByRole('button', { name: 'Presets', exact: true }).count(), 0)
 check('embed mode hides the Settings button', await page.getByRole('button', { name: 'Settings', exact: true }).count(), 0)
 check('embed mode hides the Help button', await page.getByRole('button', { name: /Help/ }).count(), 0)
 check('embed mode shows Pause', await page.getByRole('button', { name: 'Pause' }).count() > 0, true)

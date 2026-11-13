@@ -29,7 +29,7 @@ const check = (name, actual, expected) => {
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1000)
 await page.getByRole('button', { name: 'Pause' }).click()
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByRole('button', { name: /Solar System/ }).first().click()
 await frames()
 
@@ -79,7 +79,7 @@ await frames()
   const b = g.bodies[0]
   await page.mouse.click(b.x * g.viewport.scale + g.viewport.x, b.y * g.viewport.scale + g.viewport.y)
   await frames()
-  await page.getByRole('button', { name: 'Presets' }).click()
+  await page.getByRole('button', { name: 'Presets', exact: true }).click()
   await frames()
   check('[chain] sheet open on top of editor', { sheet: await sheetOpen('Presets'), editor: await editorOpen() }, { sheet: true, editor: true })
 
@@ -157,7 +157,7 @@ const EXPECTED = {
 }
 
 
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await frames()
 const labelToKey = {
   'Binary Stars': 'binary', 'Solar System': 'solar', 'Figure-8': 'figure8',
@@ -174,7 +174,7 @@ await esc()
 await frames()
 
 for (const [label, key] of Object.entries(labelToKey)) {
-  await page.getByRole('button', { name: 'Presets' }).click()
+  await page.getByRole('button', { name: 'Presets', exact: true }).click()
   await frames()
   await page.getByRole('button', { name: new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).click()
   await frames()
@@ -196,7 +196,7 @@ for (const [label, key] of Object.entries(labelToKey)) {
 
 // ═══ 4. Phase 4d: double-click no longer leaves the editor open ═══════════
 {
-  await page.getByRole('button', { name: 'Presets' }).click()
+  await page.getByRole('button', { name: 'Presets', exact: true }).click()
   await frames()
   await page.getByRole('button', { name: /Solar System/ }).first().click()
   await frames()

@@ -68,7 +68,7 @@ check('? opens the help overlay', await page.getByText('All Controls').count() >
 await page.keyboard.press('Escape')
 
 // ── Shortcuts do not fire while typing in the "name this scene" field ───────
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByPlaceholder('Name this scene').click()
 await page.getByPlaceholder('Name this scene').fill('f r + - ?')
 await page.waitForTimeout(100)

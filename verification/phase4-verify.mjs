@@ -63,7 +63,7 @@ const CONTROLS = [
 await page.goto(url, { waitUntil: 'networkidle' })
 await page.waitForTimeout(1000)
 await page.getByRole('button', { name: 'Pause' }).click()
-await page.getByRole('button', { name: 'Presets' }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click(); await page.getByRole('button', { name: /Solar System/ }).first().click()
 await frames()
 
 for (const inset of INSETS) {

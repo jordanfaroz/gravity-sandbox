@@ -22,7 +22,7 @@ function check(name, actual, expected) {
   await narrowerPage.addInitScript(() => { try { localStorage.setItem('nbody.tutorial.v1', 'skipped') } catch {} })
   await narrowerPage.goto(url, { waitUntil: 'networkidle' })
   await narrowerPage.waitForTimeout(500)
-  check('1280px still shows the mobile bottom bar (Presets button)', await narrowerPage.getByRole('button', { name: 'Presets' }).count() > 0, true)
+  check('1280px still shows the mobile bottom bar (Presets button)', await narrowerPage.getByRole('button', { name: 'Presets', exact: true }).count() > 0, true)
   check('1280px has no desktop panel', await narrowerPage.locator('[data-control-layer="right"]').count(), 0)
   await narrowerPage.close()
 }

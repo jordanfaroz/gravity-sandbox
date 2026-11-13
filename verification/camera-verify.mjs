@@ -53,7 +53,7 @@ await page.waitForTimeout(1200)
 // therefore every hash — differ between runs.
 await page.getByRole('button', { name: /Pause/ }).click()
 // Presets moved into a sheet in Phase 4b, after this script was written.
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByRole('button', { name: 'Solar System' }).click()
 await frames()
 

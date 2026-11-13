@@ -19,7 +19,7 @@ await page.evaluate(() => {
 
 await page.getByRole('button', { name: /Pause/ }).click()
 // Presets moved into a sheet in Phase 4b, after this script was written.
-await page.getByRole('button', { name: 'Presets' }).click()
+await page.getByRole('button', { name: 'Presets', exact: true }).click()
 await page.getByRole('button', { name: 'Solar System', exact: true }).click()
 await frames()
 

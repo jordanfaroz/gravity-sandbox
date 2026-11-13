@@ -67,15 +67,56 @@ been written against the wrong assumption about ownership.
    Chromium has no real browser chrome to show or hide, so
    `window.innerHeight`, `100vh`, and `100dvh` are always identical in
    Playwright — there is no way to make the layout and visual viewports
-   diverge the way a real phone's address bar does. A pre-fix and post-fix
-   screenshot of the mobile toolbar at any viewport size are byte-identical
-   (checked with `png-diff.mjs`) for exactly this reason; `npm run lint` /
-   `tsc --noEmit` / `npm run build` all passing and
+   diverge the way a real phone's address bar does by resizing the viewport
+   alone. `npm run lint` / `tsc --noEmit` / `npm run build` all passing and
    `verification/toolbar-visibility-verify.mjs` passing prove the layout is
    internally consistent at every tested size, not that the vh→dvh swap
-   itself does anything visible to this tooling. That part needs an
-   on-device recheck — the same caveat `phase4-verify.mjs` already carries
-   for `env(safe-area-inset-*)` resolving to 0 in desktop Chromium.
+   itself does anything visible to this tooling — the same caveat
+   `phase4-verify.mjs` already carries for `env(safe-area-inset-*)`
+   resolving to 0 in desktop Chromium. **This dvh/vh CSS layer alone did not
+   fix the bug on a real device** — see item 4 below for what replaced it as
+   the primary fix, and for how that part IS covered by a genuinely
+   discriminating headless test.
+
+4. **The visualViewport JS fallback, and why its test mocks the object
+   instead of resizing the viewport.** After item 3's CSS-only fix still
+   failed on a real device, the app shell (`gravity-sandbox.tsx`'s root div)
+   was changed to read `window.visualViewport.height`/`.offsetTop` directly
+   (`src/lib/use-visual-viewport.ts`, updated on both the `resize` and
+   `scroll` events `visualViewport` fires) and override the CSS sizing with
+   `position: fixed` + an explicit height once a real measurement lands. A
+   second, independent fallback was added alongside it: a top-anchored
+   "Planets / Presets" button (`data-control="planets-presets-handle"`,
+   next to Help/Fullscreen) that's reachable by construction regardless of
+   either sizing fix, because `top: safe-area-inset-top` can't end up below
+   the fold the way a `bottom: 0` element can.
+
+   Per item 3, resizing a Playwright viewport can't make
+   `window.visualViewport` diverge from the layout viewport in headless
+   Chromium — but this fix *reads that JS object directly*, which means it
+   CAN be exercised in headless Chromium by replacing the object itself.
+   `toolbar-visibility-verify.mjs`'s `mockVisualViewport` does this: before
+   the page's own JS runs (`page.addInitScript`), it swaps
+   `window.visualViewport` for a fake with a shorter `height` and nonzero
+   `offsetTop` than the real layout viewport, forwarding every other
+   property from the real object so nothing unrelated breaks. Because the
+   fix reads this object and the old (pre-this-fix) code never did, the
+   check genuinely discriminates — confirmed by running it against the
+   pre-fix build directly (`git stash`, rebuild, run the test against that
+   build) and watching it fail with the toolbar's real bottom edge past the
+   mocked visible area, then pass again once the fix is restored. Do not
+   "simplify" this test back to plain `setViewportSize` matrix testing like
+   `testOrientation`'s — that's exactly the form that passed on both the
+   broken and fixed code and is why this layer needed a different test at
+   all.
+
+   Do not size the canvas itself from this new shell-height mechanism, or
+   from `visualViewport` at all — that would violate the coordinate-space
+   boundary documented on `sizeCanvas` in `gravity-sandbox.tsx` (still
+   layout-viewport-only, unchanged). The two are different concerns:
+   `sizeCanvas` owns the canvas's backing store and pointer-coordinate math;
+   this fallback owns only the outer shell container's CSS box, which the
+   canvas then fills via `inset: 0` exactly as before.
 
 ## Where the verification harnesses live
 
